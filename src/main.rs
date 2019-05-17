@@ -2,12 +2,9 @@
 extern crate clap;
 
 use std::thread;
-// use std::sync::mpsc;
-// use std::net::{IpAddr, Ipv4Addr};
 use nng::{Message, Protocol, Socket};
 
 const FNAME_CONFIG: &str = "/etc/sprinkler.conf";
-const STOP: i32 = -1;
 
 trait Trigger {
     fn activate(&mut self);
@@ -84,8 +81,8 @@ impl Trigger for Ping {
         let mut s = Socket::new(Protocol::Req0).expect("nng: failed to create local socket");
         let msg: &[u8] = &[0x1B, 0xEF];
         s.dial(&addr).expect("nng: failed to connect to trigger");
-        match s.send(nng::Message::from(msg)) {
-            Ok(_) => eprintln!("deactivated"),
+        match s.send(Message::from(msg)) {
+            Ok(_) => eprintln!("[{}] has been deactivated", tid),
             Err(e) => eprintln!("failed to deactivate trigger: {:?}", e)
         }
     }
@@ -111,14 +108,9 @@ fn main() {
         Ping::new(1, String::from("localhost"))
     ];
 
-    for mut i in triggers.iter_mut() {
+    for i in triggers.iter_mut() {
         i.activate();
     }
 
-    thread::sleep(std::time::Duration::from_secs(10));
-    triggers[0].deactivate();
-
-    loop {
-        thread::sleep(std::time::Duration::from_secs(10));
-    }
+    loop { thread::sleep(std::time::Duration::from_secs(10)); }
 }
