@@ -37,6 +37,7 @@ impl Trigger for DockerOOM {
 }
 
 struct Ping {
+    id: usize,
     host: String,
     state: bool,
     join_handle: Option<thread::JoinHandle<()>>,
@@ -44,18 +45,25 @@ struct Ping {
 }
 
 impl Ping {
-    fn new(host: String) -> Ping {
-        Ping { host: host, state: false, join_handle: None, socket_internal: None }
+    fn new(id: usize, host: String) -> Ping {
+        Ping {
+            id: id,
+            host: host,
+            state: false,
+            join_handle: None,
+            socket_internal: None
+        }
     }
 }
 
 impl Trigger for Ping {
     fn activate(&mut self) {
-        let addr = "inproc://sprinkler/0/control";
+        let tid = self.id;
+        let addr = format!("inproc://sprinkler-{}/control", tid);
         let p = thread::spawn(move || {
             let mut s = Socket::new(Protocol::Rep0).expect("nng: failed to create local socket");
             s.set_nonblocking(true);
-            s.listen(addr.clone()).expect("nng: failed to listen to local socket");
+            s.listen(&addr).expect("nng: failed to listen to local socket");
             loop {
                 // send message
                 // receive message
@@ -63,7 +71,7 @@ impl Trigger for Ping {
                 thread::sleep(std::time::Duration::from_secs(3));
                 match s.recv() {
                     Ok(msg) => { break; } // deactivate signal
-                    Err(e) => {println!(".")} // no msg
+                    Err(e) => {eprintln!("{}", tid)} // no msg
                 }
             }
         });
@@ -71,10 +79,15 @@ impl Trigger for Ping {
     }
 
     fn deactivate(&mut self) {
-        let addr = "inproc://sprinkler/0/control";
-        let mut s = Socket::new(Protocol::Rep0).expect("nng: failed to create local socket");
+        let tid = self.id;
+        let addr = format!("inproc://sprinkler-{}/control", tid);
+        let mut s = Socket::new(Protocol::Req0).expect("nng: failed to create local socket");
         let msg: &[u8] = &[0x1B, 0xEF];
-        s.send(nng::Message::from(msg));
+        s.dial(&addr).expect("nng: failed to connect to trigger");
+        match s.send(nng::Message::from(msg)) {
+            Ok(_) => eprintln!("deactivated"),
+            Err(e) => eprintln!("failed to deactivate trigger: {:?}", e)
+        }
     }
 
     fn signal(&self) {
@@ -94,15 +107,18 @@ fn main() {
     // parse FNAME_CONFIG and add triggers
     let mut triggers = vec![
         // DockerOOM { host: String::from("k-prod-cpu-1.dsa.lan") }
-        Ping::new(String::from("localhost"))
+        Ping::new(0, String::from("localhost")),
+        Ping::new(1, String::from("localhost"))
     ];
 
     for mut i in triggers.iter_mut() {
         i.activate();
     }
 
-    for i in 0..2 {
+    thread::sleep(std::time::Duration::from_secs(10));
+    triggers[0].deactivate();
+
+    loop {
         thread::sleep(std::time::Duration::from_secs(10));
-        triggers[0].deactivate();
     }
 }
