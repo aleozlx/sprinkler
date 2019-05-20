@@ -1,10 +1,40 @@
 #[macro_use]
 extern crate clap;
+#[macro_use]
+extern crate log;
+extern crate fern;
 
+use std::path::Path;
 use std::thread;
 use nng::{Message, Protocol, Socket};
 
 const FNAME_CONFIG: &str = "/etc/sprinkler.conf";
+
+fn setup_logger(verbose: u64) -> Result<(), fern::InitError> {
+    // let ref log_dir = Path::new("/var/log");
+    // TODO create log dir upon install?
+    // if !Path::new(log_dir).exists() { std::fs::create_dir(log_dir)?; }
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "{} {} {}",
+                chrono::Local::now().format("[%Y-%m-%d %H:%M:%S]"),
+                record.level(),
+                message
+            ))
+        })
+        .level(match verbose {
+            0 => log::LevelFilter::Info,
+            1 => log::LevelFilter::Info,
+            2 => log::LevelFilter::Debug,
+            3 => log::LevelFilter::Trace,
+            _ => log::LevelFilter::Trace
+        })
+        // .chain(fern::log_file(log_dir.join("sprinkler.log"))?)
+        .chain(std::io::stderr())
+        .apply()?;
+    Ok(())
+}
 
 trait Trigger {
     fn activate(&mut self);
@@ -82,8 +112,8 @@ impl Trigger for Ping {
         let msg: &[u8] = &[0x1B, 0xEF];
         s.dial(&addr).expect("nng: failed to connect to trigger");
         match s.send(Message::from(msg)) {
-            Ok(_) => eprintln!("[{}] has been deactivated", tid),
-            Err(e) => eprintln!("failed to deactivate trigger: {:?}", e)
+            Ok(_) => info!("[{}] has been deactivated", tid),
+            Err(e) => error!("failed to deactivate trigger: {:?}", e)
         }
     }
 
@@ -100,6 +130,8 @@ fn main() {
             (@arg RESUME: --("agent") "Agent mode")
             (@arg VERBOSE: --verbose -v ... "Logging verbosity")
         ).get_matches();
+    
+    setup_logger(args.occurrences_of("VERBOSE")).expect("Logger Error.");
 
     // parse FNAME_CONFIG and add triggers
     let mut triggers = vec![
@@ -111,6 +143,9 @@ fn main() {
     for i in triggers.iter_mut() {
         i.activate();
     }
+
+    thread::sleep(std::time::Duration::from_secs(5)); 
+    triggers[0].deactivate();
 
     loop { thread::sleep(std::time::Duration::from_secs(10)); }
 }
