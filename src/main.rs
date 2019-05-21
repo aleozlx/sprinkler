@@ -11,9 +11,7 @@ use nng::{Message, Protocol, Socket};
 const FNAME_CONFIG: &str = "/etc/sprinkler.conf";
 
 fn setup_logger(verbose: u64) -> Result<(), fern::InitError> {
-    // let ref log_dir = Path::new("/var/log");
-    // TODO create log dir upon install?
-    // if !Path::new(log_dir).exists() { std::fs::create_dir(log_dir)?; }
+    let ref log_dir = Path::new("/var/log");
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -36,17 +34,17 @@ fn setup_logger(verbose: u64) -> Result<(), fern::InitError> {
     Ok(())
 }
 
-trait Trigger {
+trait Sprinkler {
     fn activate(&mut self);
     fn deactivate(&mut self);
-    fn signal(&self);
+    fn trigger(&self);
 }
 
 struct DockerOOM {
     host: String
 }
 
-impl Trigger for DockerOOM {
+impl Sprinkler for DockerOOM {
     fn activate(&mut self) {
         // new thread
         // ssh & run docker events
@@ -58,7 +56,7 @@ impl Trigger for DockerOOM {
         // stop thread
     }
 
-    fn signal(&self) {
+    fn trigger(&self) {
         // kill pod, kill continer, rm --force
     }
 }
@@ -83,7 +81,7 @@ impl Ping {
     }
 }
 
-impl Trigger for Ping {
+impl Sprinkler for Ping {
     fn activate(&mut self) {
         let tid = self.id;
         let addr = format!("inproc://sprinkler-{}/control", tid);
@@ -94,10 +92,15 @@ impl Trigger for Ping {
             loop {
                 // send message
                 // receive message
-                // if state changes, signal
+                let state_recv = false;
+                if self.state != state_recv {
+                    self.state = state_recv;
+                    self.trigger();
+                }
+                // if state changes, trigger
                 thread::sleep(std::time::Duration::from_secs(3));
                 match s.recv() {
-                    Ok(msg) => { break; } // deactivate signal
+                    Ok(msg) => { break; } // deactivate trigger
                     Err(e) => {eprintln!("{}", tid)} // no msg
                 }
             }
@@ -117,8 +120,8 @@ impl Trigger for Ping {
         }
     }
 
-    fn signal(&self) {
-        // log going online/offline
+    fn trigger(&self) {
+        info!("[{}] (Ping) has detected {} becoming {}", self.id, self.host, if self.state {"online"} else {"offline"});
     }
 }
 
@@ -143,9 +146,6 @@ fn main() {
     for i in triggers.iter_mut() {
         i.activate();
     }
-
-    thread::sleep(std::time::Duration::from_secs(5)); 
-    triggers[0].deactivate();
 
     loop { thread::sleep(std::time::Duration::from_secs(10)); }
 }
