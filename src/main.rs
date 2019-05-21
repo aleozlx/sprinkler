@@ -34,58 +34,55 @@ fn setup_logger(verbose: u64) -> Result<(), fern::InitError> {
     Ok(())
 }
 
-trait Sprinkler {
-    fn activate(&mut self);
-    fn deactivate(&mut self);
-    fn trigger(&self);
+trait Sprinkler: Clone {
+    fn activate(&self) -> std::thread::JoinHandle<()>;
+    fn deactivate(&self);
 }
 
+#[derive(Clone)]
 struct DockerOOM {
     host: String
 }
 
 impl Sprinkler for DockerOOM {
-    fn activate(&mut self) {
+    fn activate(&self) -> std::thread::JoinHandle<()> {
+        unimplemented!();
         // new thread
         // ssh & run docker events
         // detect oom
         // lookup pod
     }
 
-    fn deactivate(&mut self) {
+    fn deactivate(&self) {
         // stop thread
     }
 
-    fn trigger(&self) {
-        // kill pod, kill continer, rm --force
-    }
+    // fn trigger(&self) {
+    //     // kill pod, kill continer, rm --force
+    // }
 }
 
+#[derive(Clone)]
 struct Ping {
     id: usize,
-    host: String,
-    state: bool,
-    join_handle: Option<thread::JoinHandle<()>>,
-    socket_internal: Option<Socket>
+    host: String
 }
 
 impl Ping {
     fn new(id: usize, host: String) -> Ping {
         Ping {
             id: id,
-            host: host,
-            state: false,
-            join_handle: None,
-            socket_internal: None
+            host: host
         }
     }
 }
 
 impl Sprinkler for Ping {
-    fn activate(&mut self) {
-        let tid = self.id;
-        let addr = format!("inproc://sprinkler-{}/control", tid);
-        let p = thread::spawn(move || {
+    fn activate(&self) -> std::thread::JoinHandle<()> {
+        let clone = self.clone();
+        let addr = format!("inproc://sprinkler-{}/control", self.id);
+        thread::spawn(move || {
+            let mut state = false;
             let mut s = Socket::new(Protocol::Rep0).expect("nng: failed to create local socket");
             s.set_nonblocking(true);
             s.listen(&addr).expect("nng: failed to listen to local socket");
@@ -93,35 +90,31 @@ impl Sprinkler for Ping {
                 // send message
                 // receive message
                 let state_recv = false;
-                if self.state != state_recv {
-                    self.state = state_recv;
-                    self.trigger();
+                if state != state_recv {
+                    state = state_recv;
+                    info!(
+                        "[{}] (Ping) has detected {} becoming {}",
+                        clone.id, clone.host, if state {"online"} else {"offline"}
+                    );
                 }
-                // if state changes, trigger
                 thread::sleep(std::time::Duration::from_secs(3));
                 match s.recv() {
-                    Ok(msg) => { break; } // deactivate trigger
-                    Err(e) => {eprintln!("{}", tid)} // no msg
+                    Ok(_) => { break; } // deactivate trigger
+                    Err(_) => { trace!("[{}] heartbeat", clone.id) }
                 }
             }
-        });
-        self.join_handle = Some(p);
+        })
     }
 
-    fn deactivate(&mut self) {
-        let tid = self.id;
-        let addr = format!("inproc://sprinkler-{}/control", tid);
+    fn deactivate(&self) {
+        let addr = format!("inproc://sprinkler-{}/control", self.id);
         let mut s = Socket::new(Protocol::Req0).expect("nng: failed to create local socket");
         let msg: &[u8] = &[0x1B, 0xEF];
         s.dial(&addr).expect("nng: failed to connect to trigger");
         match s.send(Message::from(msg)) {
-            Ok(_) => info!("[{}] has been deactivated", tid),
+            Ok(_) => info!("[{}] has been deactivated", self.id),
             Err(e) => error!("failed to deactivate trigger: {:?}", e)
         }
-    }
-
-    fn trigger(&self) {
-        info!("[{}] (Ping) has detected {} becoming {}", self.id, self.host, if self.state {"online"} else {"offline"});
     }
 }
 
@@ -137,13 +130,13 @@ fn main() {
     setup_logger(args.occurrences_of("VERBOSE")).expect("Logger Error.");
 
     // parse FNAME_CONFIG and add triggers
-    let mut triggers = vec![
+    let triggers = vec![
         // DockerOOM { host: String::from("k-prod-cpu-1.dsa.lan") }
         Ping::new(0, String::from("localhost")),
         Ping::new(1, String::from("localhost"))
     ];
 
-    for i in triggers.iter_mut() {
+    for i in triggers {
         i.activate();
     }
 
