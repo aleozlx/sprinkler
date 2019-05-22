@@ -3,6 +3,7 @@ extern crate clap;
 #[macro_use]
 extern crate log;
 extern crate fern;
+extern crate sys_info;
 
 use std::path::Path;
 use std::thread;
@@ -36,31 +37,32 @@ fn setup_logger(verbose: u64) -> Result<(), fern::InitError> {
 
 trait Sprinkler: Clone {
     fn activate(&self) -> std::thread::JoinHandle<()>;
+    fn hostname(&self) -> &str;
     fn deactivate(&self);
 }
 
-#[derive(Clone)]
-struct DockerOOM {
-    host: String
-}
+// #[derive(Clone)]
+// struct DockerOOM {
+//     host: String
+// }
 
-impl Sprinkler for DockerOOM {
-    fn activate(&self) -> std::thread::JoinHandle<()> {
-        unimplemented!();
-        // new thread
-        // ssh & run docker events
-        // detect oom
-        // lookup pod
-    }
+// impl Sprinkler for DockerOOM {
+//     fn activate(&self) -> std::thread::JoinHandle<()> {
+//         unimplemented!();
+//         // new thread
+//         // ssh & run docker events
+//         // detect oom
+//         // lookup pod
+//     }
 
-    fn deactivate(&self) {
-        // stop thread
-    }
+//     fn deactivate(&self) {
+//         // stop thread
+//     }
 
-    // fn trigger(&self) {
-    //     // kill pod, kill continer, rm --force
-    // }
-}
+//     // fn trigger(&self) {
+//     //     // kill pod, kill continer, rm --force
+//     // }
+// }
 
 #[derive(Clone)]
 struct Ping {
@@ -78,6 +80,10 @@ impl Ping {
 }
 
 impl Sprinkler for Ping {
+    fn hostname(&self) -> &str {
+        &self.host
+    }
+
     fn activate(&self) -> std::thread::JoinHandle<()> {
         let clone = self.clone();
         let addr = format!("inproc://sprinkler-{}/control", self.id);
@@ -123,7 +129,7 @@ fn main() {
             (version: crate_version!())
             (author: crate_authors!())
             (about: crate_description!())
-            (@arg RESUME: --("agent") "Agent mode")
+            (@arg AGENT: --("agent") "Agent mode")
             (@arg VERBOSE: --verbose -v ... "Logging verbosity")
         ).get_matches();
     
@@ -132,13 +138,26 @@ fn main() {
     // parse FNAME_CONFIG and add triggers
     let triggers = vec![
         // DockerOOM { host: String::from("k-prod-cpu-1.dsa.lan") }
-        Ping::new(0, String::from("localhost")),
+        Ping::new(0, String::from("latitude-5289")),
         Ping::new(1, String::from("localhost"))
     ];
 
-    for i in triggers {
-        i.activate();
+    if args.is_present("AGENT") {
+        if let Ok(hostname) = sys_info::hostname() {
+            for i in triggers {
+                if i.hostname() == hostname {
+                    println!("match!");
+                }
+            }
+        }
+        else {
+            error!("Cannot obtain hostname.");
+        }
     }
-
-    loop { thread::sleep(std::time::Duration::from_secs(10)); }
+    else {
+        for i in triggers {
+            i.activate();
+        }
+        loop { thread::sleep(std::time::Duration::from_secs(300)); }
+    }
 }
