@@ -8,12 +8,12 @@ extern crate tokio;
 // extern crate bytes;
 
 use std::thread;
-// use std::sync::mpsc;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use byteorder::{ByteOrder, BigEndian};
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::future::{self, Either};
-use futures::sync::mpsc;
+// use futures::sync::mpsc;
 use futures::try_ready;
 use tokio::prelude::*;
 use tokio::net::{TcpListener, TcpStream};
@@ -43,50 +43,18 @@ fn setup_logger(verbose: u64) -> Result<(), fern::InitError> {
 }
 
 #[derive(Debug)]
-enum SprinklerProtoState {
-    //    0     2     4
-    Init, Meta, Body, End
-}
-
-impl SprinklerProtoState {
-    fn transition(&mut self) {
-        let new_state = match self {
-            SprinklerProtoState::Init => Some(SprinklerProtoState::Meta),
-            SprinklerProtoState::Meta => Some(SprinklerProtoState::Body),
-            SprinklerProtoState::Body => Some(SprinklerProtoState::End),
-            SprinklerProtoState::End => None
-        };
-        if let Some(new_state) = new_state {
-            *self = new_state;
-        }
-    }
-}
-
-#[derive(Debug)]
 struct SprinklerProto {
     socket: TcpStream,
-    state: SprinklerProtoState,
-    id: Option<u16>,
-    msglen: u16,
     read_buffer: BytesMut,
-    write_buffer: BytesMut,
-}
-
-#[derive(Debug)]
-struct SprinklerMessage {
-    id: usize,
-    msg: String
+    // write_buffer: BytesMut,
 }
 
 impl SprinklerProto {
     fn new(socket: TcpStream) -> Self {
         SprinklerProto {
             socket,
-            state: SprinklerProtoState::Init,
-            id: None,
-            msglen: 0,
             read_buffer: BytesMut::new(),
-            write_buffer: BytesMut::new(),
+            // write_buffer: BytesMut::new(),
         }
     }
 
@@ -102,73 +70,67 @@ impl SprinklerProto {
     }
 }
 
-impl Future for SprinklerProto {
-    type Item = SprinklerMessage;
+#[derive(Clone, Debug)]
+struct SprinklerProtoHeader {
+    id: u16,
+    len: u16
+}
+
+impl Stream for SprinklerProto {
+    type Item = SprinklerProtoHeader;
+    type Error = std::io::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        let sock_closed = self.refill()?.is_ready();        
+        if self.read_buffer.len() > 4 {
+            Ok(Async::Ready(Some(SprinklerProtoHeader {
+                id: BigEndian::read_u16(&self.read_buffer.split_to(2)),
+                len: BigEndian::read_u16(&self.read_buffer.split_to(2))
+            })))
+        }
+        else {
+            if sock_closed { Ok(Async::Ready(None)) }
+            else { Ok(Async::NotReady) }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SprinklerMessage {
+    id: usize,
+    msg: String
+}
+
+struct SprinklerMessageDispatcher {
+    // proto: 
+}
+
+impl SprinklerMessageDispatcher {
+    fn new(proto: SprinklerProto, header: SprinklerProtoHeader) -> Self {
+
+    }
+}
+
+impl Future for SprinklerMessageDispatcher {
+    type Item = ();
     type Error = std::io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let sock_closed = self.refill()?.is_ready();        
-        match self.state {
-            SprinklerProtoState::Init => {
-                self.state.transition();
-                let id_bin = self.read_buffer.split_to(2);
-                self.id = BigEndian::read_u16(&id_bin);
-                Ok(Async::Ready(Some(id_bin)))
-            },
-            SprinklerProtoState::SprinklerId => {
-                self.state.transition();
-                let len_bin = self.read_buffer.split_to(2);
-                self.msglen = BigEndian::read_u16(&len_bin);
-                Ok(Async::Ready(Some(len_bin)))
-            },
-            SprinklerProtoState::MessageLength => {
-                if self.msglen > 0 {
 
-                    let msg = self.read_buffer.take();
-                }
-                self.state.transition();
-                Ok(Async::Ready(Some(self.read_buffer.split_to(2))))
-            },
-            SprinklerProtoState::MessageBody => {
-                Ok(Async::Ready(None))
-            }
-        }
-
-        // if sock_closed {
-        //     Ok(Async::Ready(None))
-        // } else {
-        //     Ok(Async::NotReady)
-        // }
-
-        // if let Some(pos) = pos {
-        //     // Remove the line from the read buffer and set it to `line`.
-        //     let mut line = self.read_buffer.split_to(pos + 2);
-
-        //     // Drop the line-ending
-        //     line.split_off(pos);
-
-        //     // Return the line
-        //     return Ok(Async::Ready(Some(line)));
-        // }
-
-        
     }
 }
 
 trait Sprinkler: Clone {
     fn id(&self) -> usize;
     fn hostname(&self) -> &str;
-    fn addr_internal(&self) -> String {
-        format!("inproc://sprinkler-{}/control", self.id())
-    }
     fn activate_master(&self) -> std::thread::JoinHandle<()>;
-    fn activate_agent(&self) -> mpsc::Sender<String>;
+    // fn activate_agent(&self) -> mpsc::Sender<String>;
     fn deactivate(&self);
 }
 
 // #[derive(Clone)]
 // struct DockerOOM {
-//     host: String
+//     hostname: String
 // }
 
 // impl Sprinkler for DockerOOM {
@@ -197,10 +159,10 @@ struct CommCheck {
 }
 
 impl CommCheck {
-    fn new(id: usize, host: String) -> Self {
+    fn new(id: usize, hostname: String) -> Self {
         CommCheck {
             _id: id,
-            _hostname: host,
+            _hostname: hostname,
             _deactivate: Arc::new(Mutex::new(false))
         }
     }
@@ -241,14 +203,14 @@ impl Sprinkler for CommCheck {
         })
     }
 
-    fn activate_agent(&self) -> mpsc::Sender<String> {
-        // let clone = self.clone();
-        // let (sender, receiver) = mpsc::channel();
-        // thread::spawn(move || {
+    // fn activate_agent(&self) -> mpsc::Sender<String> {
+    //     // let clone = self.clone();
+    //     // let (sender, receiver) = mpsc::channel();
+    //     // thread::spawn(move || {
             
-        // });
-        // sender
-    }
+    //     // });
+    //     // sender
+    // }
 
     fn deactivate(&self) {
         *self._deactivate.lock().unwrap() = true;
@@ -286,7 +248,7 @@ fn main() {
 
     // parse FNAME_CONFIG and add triggers
     let triggers = vec![
-        // DockerOOM { host: String::from("k-prod-cpu-1.dsa.lan") }
+        // DockerOOM { hostname: String::from("k-prod-cpu-1.dsa.lan") }
         CommCheck::new(0, String::from("latitude-5289")),
         CommCheck::new(1, String::from("localhost"))
     ];
@@ -295,7 +257,7 @@ fn main() {
         if let Ok(hostname) = sys_info::hostname() {
             
             for i in triggers.iter().filter(|&i| i.hostname() == hostname) {
-                i.activate_agent();
+                // i.activate_agent();
                 info!("[{}] activated.", i.id());
             }
             
@@ -313,10 +275,15 @@ fn main() {
             .for_each(|s| {
                 let proto = SprinklerProto::new(s);
                 let handle_conn = proto
-                    .and_then(|msg| {
-                        // let feeder = CommCheckFeeder::new();
-                        Either::A(future::ok(()))
-                        // Either::B(peer)
+                    .into_future()
+                    .map_err(|(e, _)| e)
+                    .and_then(|(header, proto)| {
+                        if let Some(header) = header {
+                            Either::B(SprinklerMessageDispatcher::new(proto, header))
+                        }
+                        else {
+                            Either::A(future::ok(()))
+                        }
                     })
                     // Task futures have an error of type `()`, this ensures we handle the
                     // error. We do this by printing the error to STDOUT.
