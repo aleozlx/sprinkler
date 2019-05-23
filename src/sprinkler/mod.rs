@@ -9,6 +9,10 @@ use tokio::net::TcpStream;
 pub mod commcheck;
 pub use commcheck::*;
 
+pub const HEART_BEAT: u64 = 3;
+pub const RETRY_DELAY: u64 = 20;
+pub const MASTER_ADDR: &str = "127.0.0.1:3777";
+
 /// A TCP stream adapter to convert between byte stream and objects
 #[derive(Debug)]
 pub struct SprinklerProto {

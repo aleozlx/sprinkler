@@ -44,7 +44,7 @@ impl Sprinkler for CommCheck {
                         clone.id(), clone.hostname(), if state {"online"} else {"offline"}
                     );
                 }
-                thread::sleep(std::time::Duration::from_secs(3));
+                thread::sleep(std::time::Duration::from_secs(super::HEART_BEAT));
                 if *clone._deactivate.lock().unwrap() { break; }
                 else { trace!("sprinkler[{}] heartbeat", clone.id()); }
             }
@@ -55,19 +55,18 @@ impl Sprinkler for CommCheck {
     fn activate_agent(&self) {
         let clone = self.clone();
         thread::spawn(move || loop {
-            let addr = "127.0.0.1:3777";
-            if let Ok(mut stream) = std::net::TcpStream::connect(&addr) {
+            if let Ok(mut stream) = std::net::TcpStream::connect(super::MASTER_ADDR) {
                 let buf = SprinklerProto::buffer(&clone, String::from("COMMCHK"));
                 if let Err(e) = stream.write_all(&buf) {
                     error!("Failed to send the master thread a message: {}", e);
-                    thread::sleep(std::time::Duration::from_secs(20));
+                    thread::sleep(std::time::Duration::from_secs(super::RETRY_DELAY));
                 }
             }
             else {
                 error!("Connection error.");
-                thread::sleep(std::time::Duration::from_secs(20));
+                thread::sleep(std::time::Duration::from_secs(super::RETRY_DELAY));
             }
-            thread::sleep(std::time::Duration::from_secs(3));
+            thread::sleep(std::time::Duration::from_secs(super::HEART_BEAT));
         });
     }
 
