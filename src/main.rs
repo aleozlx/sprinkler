@@ -42,11 +42,11 @@ fn setup_logger(verbose: u64) -> Result<(), fern::InitError> {
     Ok(())
 }
 
+/// A TCP stream adapter to convert between byte stream and objects
 #[derive(Debug)]
 struct SprinklerProto {
     socket: TcpStream,
     read_buffer: BytesMut,
-    // write_buffer: BytesMut,
 }
 
 impl SprinklerProto {
@@ -54,10 +54,10 @@ impl SprinklerProto {
         SprinklerProto {
             socket,
             read_buffer: BytesMut::new(),
-            // write_buffer: BytesMut::new(),
         }
     }
 
+    /// Encode a message and place it in a write buffer
     fn buffer<S: Sprinkler>(sprinkler: &S, msg: String) -> BytesMut {
         let mut write_buffer = BytesMut::new();
         write_buffer.reserve(512);
@@ -79,6 +79,7 @@ impl SprinklerProto {
     }
 }
 
+/// Message header
 #[derive(Clone, Debug)]
 struct SprinklerProtoHeader {
     id: u16,
@@ -104,6 +105,7 @@ impl Stream for SprinklerProto {
     }
 }
 
+/// Message relay between master threads and TCP sockets connected to remote agents
 struct SprinklerRelay {
     proto: SprinklerProto,
     header: SprinklerProtoHeader,
@@ -140,11 +142,25 @@ impl Future for SprinklerRelay {
     }
 }
 
+/// System recovery mechanisms are consisted of distributed agent threads monitored by master threads, identifiable by a systemwide id.
+/// The agent threads, at a remote location, will individually detect system anomalies and attempt recovery after (trying to) notify master threads,
+/// so that there will not be a single point of failure.
+/// The master threads, gathered at a single reachable networking endpoint, may participate in any system recovery orchestration.
+/// The systemwide configuration is done by replicating the same config file and executable.
 trait Sprinkler: Clone {
+    /// Get systemwide id
     fn id(&self) -> usize;
+
+    /// Get the hostname, where the agent would be deployed
     fn hostname(&self) -> &str;
+
+    /// Start the master thread, returning a sender (to the master thread) on a intraprocess communication channel
     fn activate_master(&self) -> mpsc::Sender<String>;
+
+    /// Start the agent thread
     fn activate_agent(&self);
+
+    /// Kill the master thread. Note: there is no way to reach out and kill any agent threads.
     fn deactivate(&self);
 }
 
@@ -171,6 +187,7 @@ trait Sprinkler: Clone {
 //     // }
 // }
 
+/// Basic communication checking, logging connection state changes
 #[derive(Clone)]
 struct CommCheck {
     _id: usize,
