@@ -142,7 +142,7 @@ impl Future for SprinklerRelay {
     }
 }
 
-/// System recovery mechanisms are consisted of distributed agent threads monitored by master threads, identifiable by a systemwide id.
+/// System recovery mechanisms, which are consisted of distributed agent threads monitored by master threads, identifiable by a systemwide id.
 /// The agent threads, at a remote location, will individually detect system anomalies and attempt recovery after (trying to) notify master threads,
 /// so that there will not be a single point of failure.
 /// The master threads, gathered at a single reachable networking endpoint, may participate in any system recovery orchestration.
@@ -238,19 +238,20 @@ impl Sprinkler for CommCheck {
 
     fn activate_agent(&self) {
         let clone = self.clone();
-        thread::spawn(move || {
-            let addr = "127.0.0.1:3777".parse().unwrap();
-            let client = TcpStream::connect(&addr)
-                .and_then(move |stream| {
-                    let buf = SprinklerProto::buffer(&clone, String::from("COMMCHK"));
-                    tokio::io::write_all(stream, buf).then(|_| {
-                        Ok(())
-                    })
-                })
-                .map_err(|err| {
-                    error!("connection error = {:?}", err);
-                });
-            tokio::run(client);
+        thread::spawn(move || loop {
+            let addr = "127.0.0.1:3777";
+            if let Ok(mut stream) = std::net::TcpStream::connect(&addr) {
+                let buf = SprinklerProto::buffer(&clone, String::from("COMMCHK"));
+                if let Err(e) = stream.write_all(&buf) {
+                    error!("Failed to send the master thread a message: {}", e);
+                    thread::sleep(std::time::Duration::from_secs(20));
+                }
+            }
+            else {
+                error!("Connection error.");
+                thread::sleep(std::time::Duration::from_secs(20));
+            }
+            thread::sleep(std::time::Duration::from_secs(3));
         });
     }
 
