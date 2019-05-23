@@ -7,12 +7,12 @@ extern crate sys_info;
 
 use std::path::Path;
 use std::thread;
-use nng::{Message, Protocol, Socket};
+use nng::{Message, Protocol, Socket, Listener, ListenerOptions};
 
 const FNAME_CONFIG: &str = "/etc/sprinkler.conf";
 
 fn setup_logger(verbose: u64) -> Result<(), fern::InitError> {
-    let ref log_dir = Path::new("/var/log");
+    // let ref log_dir = Path::new("/var/log");
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -36,9 +36,22 @@ fn setup_logger(verbose: u64) -> Result<(), fern::InitError> {
 }
 
 trait Sprinkler: Clone {
-    fn activate(&self) -> std::thread::JoinHandle<()>;
+    fn id(&self) -> usize;
     fn hostname(&self) -> &str;
-    fn deactivate(&self);
+    fn addr_internal(&self) -> String {
+        format!("inproc://sprinkler-{}/control", self.id())
+    }
+    fn activate_master(&self) -> std::thread::JoinHandle<()>;
+    fn activate_agent(&self) -> std::thread::JoinHandle<()>;
+    fn deactivate(&self) {
+        let mut s = Socket::new(Protocol::Req0).expect("nng: failed to create local socket");
+        let msg: &[u8] = &[0x1B, 0xEF];
+        s.dial(&self.addr_internal()).expect("nng: failed to connect to trigger");
+        match s.send(Message::from(msg)) {
+            Ok(_) => info!("[{}] has been deactivated", self.id()),
+            Err(e) => error!("failed to deactivate trigger: {:?}", e)
+        }
+    }
 }
 
 // #[derive(Clone)]
@@ -47,7 +60,7 @@ trait Sprinkler: Clone {
 // }
 
 // impl Sprinkler for DockerOOM {
-//     fn activate(&self) -> std::thread::JoinHandle<()> {
+//     fn activate_master(&self) -> std::thread::JoinHandle<()> {
 //         unimplemented!();
 //         // new thread
 //         // ssh & run docker events
@@ -66,32 +79,39 @@ trait Sprinkler: Clone {
 
 #[derive(Clone)]
 struct Ping {
-    id: usize,
-    host: String
+    _id: usize,
+    _hostname: String
 }
 
 impl Ping {
     fn new(id: usize, host: String) -> Ping {
         Ping {
-            id: id,
-            host: host
+            _id: id,
+            _hostname: host
         }
+    }
+
+    fn addr_external(&self) {
+
     }
 }
 
 impl Sprinkler for Ping {
-    fn hostname(&self) -> &str {
-        &self.host
+    fn id(&self) -> usize {
+        self._id
     }
 
-    fn activate(&self) -> std::thread::JoinHandle<()> {
+    fn hostname(&self) -> &str {
+        &self._hostname
+    }
+
+    fn activate_master(&self) -> std::thread::JoinHandle<()> {
         let clone = self.clone();
-        let addr = format!("inproc://sprinkler-{}/control", self.id);
         thread::spawn(move || {
             let mut state = false;
             let mut s = Socket::new(Protocol::Rep0).expect("nng: failed to create local socket");
             s.set_nonblocking(true);
-            s.listen(&addr).expect("nng: failed to listen to local socket");
+            s.listen(&clone.addr_internal()).expect("nng: failed to listen to local socket");
             loop {
                 // send message
                 // receive message
@@ -100,27 +120,30 @@ impl Sprinkler for Ping {
                     state = state_recv;
                     info!(
                         "[{}] (Ping) has detected {} becoming {}",
-                        clone.id, clone.host, if state {"online"} else {"offline"}
+                        clone.id(), clone.hostname(), if state {"online"} else {"offline"}
                     );
                 }
                 thread::sleep(std::time::Duration::from_secs(3));
                 match s.recv() {
                     Ok(_) => { break; } // deactivate trigger
-                    Err(_) => { trace!("[{}] heartbeat", clone.id) }
+                    Err(_) => { trace!("[{}] heartbeat", clone.id()) }
                 }
             }
         })
     }
 
-    fn deactivate(&self) {
-        let addr = format!("inproc://sprinkler-{}/control", self.id);
-        let mut s = Socket::new(Protocol::Req0).expect("nng: failed to create local socket");
-        let msg: &[u8] = &[0x1B, 0xEF];
-        s.dial(&addr).expect("nng: failed to connect to trigger");
-        match s.send(Message::from(msg)) {
-            Ok(_) => info!("[{}] has been deactivated", self.id),
-            Err(e) => error!("failed to deactivate trigger: {:?}", e)
-        }
+    fn activate_agent(&self) -> std::thread::JoinHandle<()> {
+        let clone = self.clone();
+        thread::spawn(move || {
+            let mut s = Socket::new(Protocol::Pair0).expect("nng: failed to create local socket");
+            // s.set_nonblocking(true);
+            // s.listen("tls+tcp://:3777").expect("nng: failed to listen to local socket");
+            match ListenerOptions::new(&s, "tls+tcp://0.0.0.0:3777") {
+                Ok(listener) => {},
+                Err(e) => { println!("{}", e); }
+            }
+
+        })
     }
 }
 
@@ -144,20 +167,20 @@ fn main() {
 
     if args.is_present("AGENT") {
         if let Ok(hostname) = sys_info::hostname() {
-            for i in triggers {
-                if i.hostname() == hostname {
-                    println!("match!");
-                }
+            for i in triggers.iter().filter(|&i| i.hostname() == hostname) {
+                i.activate_agent();
+                info!("[{}] activated.", i.id());
             }
         }
         else {
             error!("Cannot obtain hostname.");
+            std::process::exit(-1);
         }
     }
     else {
         for i in triggers {
-            i.activate();
+            i.activate_master();
         }
-        loop { thread::sleep(std::time::Duration::from_secs(300)); }
     }
+    loop { thread::sleep(std::time::Duration::from_secs(300)); }
 }
