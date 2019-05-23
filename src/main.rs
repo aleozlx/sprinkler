@@ -107,7 +107,7 @@ struct SprinklerMessageDispatcher {
 
 impl SprinklerMessageDispatcher {
     fn new(proto: SprinklerProto, header: SprinklerProtoHeader) -> Self {
-
+        SprinklerMessageDispatcher{}
     }
 }
 
@@ -116,7 +116,7 @@ impl Future for SprinklerMessageDispatcher {
     type Error = std::io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-
+        Ok(Async::Ready(()))
     }
 }
 
@@ -183,6 +183,7 @@ impl Sprinkler for CommCheck {
 
     fn activate_master(&self) -> std::thread::JoinHandle<()> {
         let clone = self.clone();
+
         thread::spawn(move || {
             let mut state = false;
             loop {
@@ -216,24 +217,6 @@ impl Sprinkler for CommCheck {
         *self._deactivate.lock().unwrap() = true;
     }
 }
-
-// struct CommCheckFeeder {
-
-// }
-
-// impl CommCheckFeeder {
-//     fn new() -> Self {
-//         CommCheckFeeder {}
-//     }
-// }
-
-// impl Future for CommCheckFeeder {
-//     type Item = ();
-//     type Error = io::Error;
-
-//     fn poll(&mut self) -> Poll<(), io::Error> {
-//     }
-// }
 
 fn main() {
     let args = clap_app!(sprinkler =>
@@ -292,12 +275,10 @@ fn main() {
                     });
                 tokio::spawn(handle_conn)
             });
+        for i in triggers {
+            i.activate_master();
+        }
         tokio::run(server);
-
-
-        // for i in triggers {
-        //     i.activate_master();
-        // }
     }
-    loop { thread::sleep(std::time::Duration::from_secs(300)); }
+    // loop { thread::sleep(std::time::Duration::from_secs(300)); }
 }
