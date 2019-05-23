@@ -1,3 +1,4 @@
+#![feature(box_syntax)]
 #[macro_use]
 extern crate clap;
 #[macro_use]
@@ -45,11 +46,14 @@ fn main() {
     setup_logger(args.occurrences_of("VERBOSE")).expect("Logger Error.");
 
     // parse FNAME_CONFIG and add triggers
-    let triggers = vec![
+    let triggers: Vec<Box<dyn Sprinkler>> = vec![
         // DockerOOM { hostname: String::from("k-prod-cpu-1.dsa.lan") }
-        CommCheck::new(0, String::from("latitude-5289")),
-        CommCheck::new(1, String::from("localhost"))
+        box CommCheck::new(0, String::from("latitude-5289")),
+        box CommCheck::new(1, String::from("localhost")),
+        box DockerOOM::new(2, String::from("latitude-5289"))
     ];
+
+    // let triggers: Vec<&Sprinkler> = Vec::new();
 
     if args.is_present("AGENT") {
         if let Ok(hostname) = sys_info::hostname() {

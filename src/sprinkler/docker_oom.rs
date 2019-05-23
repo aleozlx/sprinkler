@@ -63,7 +63,7 @@ impl Sprinkler for DockerOOM {
         let clone = self.clone();
         thread::spawn(move || loop {
             //run docker events
-        }
+        });
     }
 
     fn deactivate(&self) {

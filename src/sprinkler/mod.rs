@@ -8,6 +8,8 @@ use tokio::net::TcpStream;
 
 pub mod commcheck;
 pub use commcheck::*;
+pub mod docker_oom;
+pub use docker_oom::*;
 
 pub const HEART_BEAT: u64 = 3;
 pub const RETRY_DELAY: u64 = 20;
@@ -129,7 +131,7 @@ impl Future for SprinklerRelay {
 /// so that there will not be a single point of failure.
 /// The master threads, gathered at a single reachable networking endpoint, may participate in any system recovery orchestration.
 /// The systemwide configuration is done by replicating the same config file and executable.
-pub trait Sprinkler: Clone {
+pub trait Sprinkler {
     /// Get systemwide id
     fn id(&self) -> usize;
 
