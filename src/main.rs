@@ -5,8 +5,8 @@ extern crate log;
 extern crate fern;
 extern crate sys_info;
 extern crate tokio;
-// extern crate bytes;
 
+use std::collections::HashMap;
 use std::thread;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -81,7 +81,7 @@ impl Stream for SprinklerProto {
     type Error = std::io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let sock_closed = self.refill()?.is_ready();        
+        let sock_closed = self.refill()?.is_ready();
         if self.read_buffer.len() > 4 {
             Ok(Async::Ready(Some(SprinklerProtoHeader {
                 id: BigEndian::read_u16(&self.read_buffer.split_to(2)),
@@ -95,36 +95,47 @@ impl Stream for SprinklerProto {
     }
 }
 
-#[derive(Debug)]
-struct SprinklerMessage {
-    id: usize,
-    msg: String
+struct SprinklerRelay {
+    proto: SprinklerProto,
+    header: SprinklerProtoHeader,
+    switch: Arc<Mutex<HashMap<usize, mpsc::Sender<String>>>>
 }
 
-struct SprinklerMessageDispatcher {
-    // proto: 
-}
-
-impl SprinklerMessageDispatcher {
-    fn new(proto: SprinklerProto, header: SprinklerProtoHeader) -> Self {
-        SprinklerMessageDispatcher{}
-    }
-}
-
-impl Future for SprinklerMessageDispatcher {
+impl Future for SprinklerRelay {
     type Item = ();
     type Error = std::io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        Ok(Async::Ready(()))
+        let sock_closed = self.proto.refill()?.is_ready();
+        if self.proto.read_buffer.len() >= self.header.len as usize {
+            if let Ok(msgbody) = String::from_utf8(self.proto.read_buffer.to_vec()) {
+                if let Some(tx) = self.switch.lock().unwrap().get(&(self.header.id as usize)) {
+                    if let Err(_) = tx.send(msgbody) {
+                        warn!("Failed to relay the message.");
+                    }
+                }
+                Ok(Async::Ready(()))
+            }
+            else {
+                warn!("Failed to decode message.");
+                Ok(Async::Ready(()))
+            }
+        }
+        else {
+            if sock_closed {
+                warn!("Message was lost.");
+                Ok(Async::Ready(()))
+            }
+            else { Ok(Async::NotReady) }
+        }
     }
 }
 
 trait Sprinkler: Clone {
     fn id(&self) -> usize;
     fn hostname(&self) -> &str;
-    fn activate_master(&self) -> std::thread::JoinHandle<()>;
-    // fn activate_agent(&self) -> mpsc::Sender<String>;
+    fn activate_master(&self) -> mpsc::Sender<String>;
+    // fn activate_agent(&self);
     fn deactivate(&self);
 }
 
@@ -166,10 +177,6 @@ impl CommCheck {
             _deactivate: Arc::new(Mutex::new(false))
         }
     }
-
-    fn addr_external(&self) {
-
-    }
 }
 
 impl Sprinkler for CommCheck {
@@ -181,15 +188,13 @@ impl Sprinkler for CommCheck {
         &self._hostname
     }
 
-    fn activate_master(&self) -> std::thread::JoinHandle<()> {
+    fn activate_master(&self) -> mpsc::Sender<String> {
         let clone = self.clone();
-
+        let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             let mut state = false;
             loop {
-                // send message
-                // receive message
-                let state_recv = false;
+                let state_recv = rx.try_recv().is_ok();
                 if state != state_recv {
                     state = state_recv;
                     info!(
@@ -201,7 +206,8 @@ impl Sprinkler for CommCheck {
                 if *clone._deactivate.lock().unwrap() { break; }
                 else { trace!("sprinkler[{}] heartbeat", clone.id()); }
             }
-        })
+        });
+        tx
     }
 
     // fn activate_agent(&self) -> mpsc::Sender<String> {
@@ -250,21 +256,25 @@ fn main() {
         }
     }
     else {
+        let switch = Arc::new(Mutex::new(HashMap::new()));
+        let switch_clone = switch.clone();
+
         let addr = "0.0.0.0:3777".parse().unwrap();
         let listener = TcpListener::bind(&addr).expect("unable to bind TCP listener");
         let server = listener.incoming()
             .map_err(|e| eprintln!("accept failed = {:?}", e))
-            .for_each(|s| {
+            .for_each(move |s| {
+                let switch_clone2 = switch_clone.clone();
                 let proto = SprinklerProto::new(s);
                 let handle_conn = proto
                     .into_future()
                     .map_err(|(e, _)| e)
-                    .and_then(|(header, proto)| {
+                    .and_then(move |(header, proto)| {
                         if let Some(header) = header {
-                            Either::B(SprinklerMessageDispatcher::new(proto, header))
+                            Either::B(SprinklerRelay{ proto, header, switch: switch_clone2 })
                         }
                         else {
-                            Either::A(future::ok(()))
+                            Either::A(future::ok(())) // Connection dropped?
                         }
                     })
                     // Task futures have an error of type `()`, this ensures we handle the
@@ -274,8 +284,11 @@ fn main() {
                     });
                 tokio::spawn(handle_conn)
             });
-        for i in triggers {
-            i.activate_master();
+        {
+            let mut swith_init = switch.lock().unwrap();
+            for i in triggers {
+                swith_init.insert(i.id(), i.activate_master());
+            }
         }
         tokio::run(server);
     }
