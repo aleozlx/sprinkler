@@ -68,7 +68,7 @@ impl SprinklerProto {
     }
 
     /// Update read buffer
-    fn read(&mut self) -> Poll<(), std::io::Error> {
+    fn check(&mut self) -> Poll<(), std::io::Error> {
         loop {
             self.read_buffer.reserve(512);
             let n = try_ready!(self.socket.read_buf(&mut self.read_buffer));
@@ -90,7 +90,7 @@ impl Stream for SprinklerProto {
     type Error = std::io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let sock_closed = self.read()?.is_ready();
+        let sock_closed = self.check()?.is_ready();
         if self.read_buffer.len() > 4 {
             Ok(Async::Ready(Some(SprinklerProtoHeader {
                 id: BigEndian::read_u16(&self.read_buffer.split_to(2)),
@@ -115,7 +115,7 @@ impl Future for SprinklerRelay {
     type Error = std::io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let sock_closed = self.proto.read()?.is_ready();
+        let sock_closed = self.proto.check()?.is_ready();
         if self.proto.read_buffer.len() >= self.header.len as usize {
             if let Ok(msgbody) = String::from_utf8(self.proto.read_buffer.to_vec()) {
                 if let Some(tx) = self.switch.lock().unwrap().get(&(self.header.id as usize)) {
