@@ -193,13 +193,13 @@ impl Sprinkler for CommCheck {
                 if state != state_recv {
                     state = state_recv;
                     info!(
-                        "[{}] (CommCheck) has detected {} becoming {}",
+                        "sprinkler[{}] (CommCheck) has detected {} becoming {}",
                         clone.id(), clone.hostname(), if state {"online"} else {"offline"}
                     );
                 }
                 thread::sleep(std::time::Duration::from_secs(3));
                 if *clone._deactivate.lock().unwrap() { break; }
-                else { trace!("[{}] heartbeat", clone.id()); }
+                else { trace!("sprinkler[{}] heartbeat", clone.id()); }
             }
         })
     }
@@ -238,12 +238,11 @@ fn main() {
 
     if args.is_present("AGENT") {
         if let Ok(hostname) = sys_info::hostname() {
-            
             for i in triggers.iter().filter(|&i| i.hostname() == hostname) {
                 // i.activate_agent();
-                info!("[{}] activated.", i.id());
+                info!("sprinkler[{}] activated.", i.id());
             }
-            
+            loop { thread::sleep(std::time::Duration::from_secs(300)); }
         }
         else {
             error!("Cannot obtain hostname.");
@@ -280,5 +279,4 @@ fn main() {
         }
         tokio::run(server);
     }
-    // loop { thread::sleep(std::time::Duration::from_secs(300)); }
 }
