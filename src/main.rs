@@ -58,10 +58,19 @@ impl SprinklerProto {
         }
     }
 
+    fn buffer<S: Sprinkler>(sprinkler: &S, msg: String) -> BytesMut {
+        let mut write_buffer = BytesMut::new();
+        write_buffer.reserve(512);
+        write_buffer.put_u16_be(sprinkler.id() as u16);
+        write_buffer.put_u16_be(msg.len() as u16);
+        write_buffer.put(msg);
+        write_buffer
+    }
+
     /// Update read buffer
-    fn refill(&mut self) -> Poll<(), std::io::Error> {
+    fn read(&mut self) -> Poll<(), std::io::Error> {
         loop {
-            self.read_buffer.reserve(1024);
+            self.read_buffer.reserve(512);
             let n = try_ready!(self.socket.read_buf(&mut self.read_buffer));
             if n == 0 {
                 return Ok(Async::Ready(()));
@@ -81,7 +90,7 @@ impl Stream for SprinklerProto {
     type Error = std::io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let sock_closed = self.refill()?.is_ready();
+        let sock_closed = self.read()?.is_ready();
         if self.read_buffer.len() > 4 {
             Ok(Async::Ready(Some(SprinklerProtoHeader {
                 id: BigEndian::read_u16(&self.read_buffer.split_to(2)),
@@ -106,7 +115,7 @@ impl Future for SprinklerRelay {
     type Error = std::io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let sock_closed = self.proto.refill()?.is_ready();
+        let sock_closed = self.proto.read()?.is_ready();
         if self.proto.read_buffer.len() >= self.header.len as usize {
             if let Ok(msgbody) = String::from_utf8(self.proto.read_buffer.to_vec()) {
                 if let Some(tx) = self.switch.lock().unwrap().get(&(self.header.id as usize)) {
@@ -135,7 +144,7 @@ trait Sprinkler: Clone {
     fn id(&self) -> usize;
     fn hostname(&self) -> &str;
     fn activate_master(&self) -> mpsc::Sender<String>;
-    // fn activate_agent(&self);
+    fn activate_agent(&self);
     fn deactivate(&self);
 }
 
@@ -198,7 +207,7 @@ impl Sprinkler for CommCheck {
                 if state != state_recv {
                     state = state_recv;
                     info!(
-                        "sprinkler[{}] (CommCheck) has detected {} becoming {}",
+                        "sprinkler[{}] (CommCheck) {} => {}",
                         clone.id(), clone.hostname(), if state {"online"} else {"offline"}
                     );
                 }
@@ -210,14 +219,23 @@ impl Sprinkler for CommCheck {
         tx
     }
 
-    // fn activate_agent(&self) -> mpsc::Sender<String> {
-    //     // let clone = self.clone();
-    //     // let (sender, receiver) = mpsc::channel();
-    //     // thread::spawn(move || {
-            
-    //     // });
-    //     // sender
-    // }
+    fn activate_agent(&self) {
+        let clone = self.clone();
+        thread::spawn(move || {
+            let addr = "127.0.0.1:3777".parse().unwrap();
+            let client = TcpStream::connect(&addr)
+                .and_then(move |stream| {
+                    let buf = SprinklerProto::buffer(&clone, String::from("COMMCHK"));
+                    tokio::io::write_all(stream, buf).then(|_| {
+                        Ok(())
+                    })
+                })
+                .map_err(|err| {
+                    error!("connection error = {:?}", err);
+                });
+            tokio::run(client);
+        });
+    }
 
     fn deactivate(&self) {
         *self._deactivate.lock().unwrap() = true;
@@ -245,7 +263,7 @@ fn main() {
     if args.is_present("AGENT") {
         if let Ok(hostname) = sys_info::hostname() {
             for i in triggers.iter().filter(|&i| i.hostname() == hostname) {
-                // i.activate_agent();
+                i.activate_agent();
                 info!("sprinkler[{}] activated.", i.id());
             }
             loop { thread::sleep(std::time::Duration::from_secs(300)); }
@@ -280,7 +298,7 @@ fn main() {
                     // Task futures have an error of type `()`, this ensures we handle the
                     // error. We do this by printing the error to STDOUT.
                     .map_err(|e| {
-                        println!("connection error = {:?}", e);
+                        error!("connection error = {:?}", e);
                     });
                 tokio::spawn(handle_conn)
             });
