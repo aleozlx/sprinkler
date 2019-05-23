@@ -3,9 +3,7 @@ extern crate clap;
 #[macro_use]
 extern crate log;
 
-use std::collections::HashMap;
 use std::thread;
-use std::sync::{mpsc, Arc, Mutex};
 use futures::future::{self, Either};
 use tokio::prelude::*;
 mod sprinkler;
@@ -33,102 +31,6 @@ fn setup_logger(verbose: u64) -> Result<(), fern::InitError> {
         .chain(std::io::stderr())
         .apply()?;
     Ok(())
-}
-
-// #[derive(Clone)]
-// struct DockerOOM {
-//     hostname: String
-// }
-
-// impl Sprinkler for DockerOOM {
-//     fn activate_master(&self) -> std::thread::JoinHandle<()> {
-//         unimplemented!();
-//         // new thread
-//         // ssh & run docker events
-//         // detect oom
-//         // lookup pod
-//     }
-
-//     fn deactivate(&self) {
-//         // stop thread
-//     }
-
-//     // fn trigger(&self) {
-//     //     // kill pod, kill continer, rm --force
-//     // }
-// }
-
-/// Basic communication checking, logging connection state changes
-#[derive(Clone)]
-struct CommCheck {
-    _id: usize,
-    _hostname: String,
-    _deactivate: Arc<Mutex<bool>>
-}
-
-impl CommCheck {
-    fn new(id: usize, hostname: String) -> Self {
-        CommCheck {
-            _id: id,
-            _hostname: hostname,
-            _deactivate: Arc::new(Mutex::new(false))
-        }
-    }
-}
-
-impl Sprinkler for CommCheck {
-    fn id(&self) -> usize {
-        self._id
-    }
-
-    fn hostname(&self) -> &str {
-        &self._hostname
-    }
-
-    fn activate_master(&self) -> mpsc::Sender<String> {
-        let clone = self.clone();
-        let (tx, rx) = mpsc::channel();
-        thread::spawn(move || {
-            let mut state = false;
-            loop {
-                let state_recv = rx.try_recv().is_ok();
-                if state != state_recv {
-                    state = state_recv;
-                    info!(
-                        "sprinkler[{}] (CommCheck) {} => {}",
-                        clone.id(), clone.hostname(), if state {"online"} else {"offline"}
-                    );
-                }
-                thread::sleep(std::time::Duration::from_secs(3));
-                if *clone._deactivate.lock().unwrap() { break; }
-                else { trace!("sprinkler[{}] heartbeat", clone.id()); }
-            }
-        });
-        tx
-    }
-
-    fn activate_agent(&self) {
-        let clone = self.clone();
-        thread::spawn(move || loop {
-            let addr = "127.0.0.1:3777";
-            if let Ok(mut stream) = std::net::TcpStream::connect(&addr) {
-                let buf = SprinklerProto::buffer(&clone, String::from("COMMCHK"));
-                if let Err(e) = stream.write_all(&buf) {
-                    error!("Failed to send the master thread a message: {}", e);
-                    thread::sleep(std::time::Duration::from_secs(20));
-                }
-            }
-            else {
-                error!("Connection error.");
-                thread::sleep(std::time::Duration::from_secs(20));
-            }
-            thread::sleep(std::time::Duration::from_secs(3));
-        });
-    }
-
-    fn deactivate(&self) {
-        *self._deactivate.lock().unwrap() = true;
-    }
 }
 
 fn main() {
@@ -163,7 +65,7 @@ fn main() {
         }
     }
     else {
-        let switch = Arc::new(Mutex::new(HashMap::new()));
+        let switch = Switch::new();
         let switch_clone = switch.clone();
 
         let addr = "0.0.0.0:3777".parse().unwrap();
@@ -193,7 +95,7 @@ fn main() {
                 tokio::spawn(handle_conn)
             });
         {
-            let mut swith_init = switch.lock().unwrap();
+            let mut swith_init = switch.inner.lock().unwrap();
             for i in triggers {
                 swith_init.insert(i.id(), i.activate_master());
             }

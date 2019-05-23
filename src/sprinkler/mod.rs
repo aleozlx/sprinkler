@@ -6,6 +6,9 @@ use futures::try_ready;
 use tokio::prelude::*;
 use tokio::net::TcpStream;
 
+pub mod commcheck;
+pub use commcheck::*;
+
 /// A TCP stream adapter to convert between byte stream and objects
 #[derive(Debug)]
 pub struct SprinklerProto {
@@ -69,11 +72,22 @@ impl Stream for SprinklerProto {
     }
 }
 
+#[derive(Clone)]
+pub struct Switch {
+    pub inner: Arc<Mutex<HashMap<usize, mpsc::Sender<String>>>>
+}
+
+impl Switch {
+    pub fn new() -> Self {
+        Switch { inner: Arc::new(Mutex::new(HashMap::new())) }
+    }
+}
+
 /// Message relay between master threads and TCP sockets connected to remote agents
 pub struct SprinklerRelay {
     pub proto: SprinklerProto,
     pub header: SprinklerProtoHeader,
-    pub switch: Arc<Mutex<HashMap<usize, mpsc::Sender<String>>>>
+    pub switch: Switch
 }
 
 impl Future for SprinklerRelay {
@@ -84,7 +98,7 @@ impl Future for SprinklerRelay {
         let sock_closed = self.proto.check()?.is_ready();
         if self.proto.read_buffer.len() >= self.header.len as usize {
             if let Ok(msgbody) = String::from_utf8(self.proto.read_buffer.to_vec()) {
-                if let Some(tx) = self.switch.lock().unwrap().get(&(self.header.id as usize)) {
+                if let Some(tx) = self.switch.inner.lock().unwrap().get(&(self.header.id as usize)) {
                     if let Err(_) = tx.send(msgbody) {
                         warn!("Failed to relay the message.");
                     }
