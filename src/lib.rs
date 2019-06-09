@@ -13,6 +13,7 @@ use chrono::naive::NaiveDateTime;
 mod commcheck;
 pub use commcheck::CommCheck;
 
+// TODO Make these programmable, perhaps package this into a params structure
 pub const HEART_BEAT: u64 = 3;
 pub const RETRY_DELAY: u64 = 20;
 pub const MASTER_ADDR: &str = "192.168.0.3:3777";
@@ -45,7 +46,7 @@ impl SprinklerProto {
 
     /// Update read buffer
     fn check(&mut self) -> Poll<(), std::io::Error> {
-        loop {
+        loop { // Why do I have a loop here? I forgot??
             self.read_buffer.reserve(512);
             let n = try_ready!(self.socket.read_buf(&mut self.read_buffer));
             if n == 0 {
@@ -157,6 +158,7 @@ pub trait Sprinkler {
 }
 
 /// Sprinkler thread level message format
+#[derive(Clone)]
 pub struct Message {
     pub timestamp: NaiveDateTime,
     pub body: String
