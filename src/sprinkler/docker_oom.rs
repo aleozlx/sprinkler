@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::thread;
 use std::sync::{mpsc, Arc, Mutex};
-use super::{Sprinkler, SprinklerProto};
+use super::{Sprinkler, SprinklerProto, Message};
 
 #[derive(Clone)]
 pub struct DockerOOM {
@@ -29,7 +29,7 @@ impl Sprinkler for DockerOOM {
         &self._hostname
     }
 
-    fn activate_master(&self) -> mpsc::Sender<String> {
+    fn activate_master(&self) -> mpsc::Sender<Message> {
         unimplemented!();
         // 
 

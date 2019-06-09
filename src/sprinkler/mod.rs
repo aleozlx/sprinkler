@@ -5,6 +5,7 @@ use bytes::{BufMut, BytesMut};
 use futures::try_ready;
 use tokio::prelude::*;
 use tokio::net::TcpStream;
+use chrono::naive::NaiveDateTime;
 
 pub mod commcheck;
 pub use commcheck::*;
@@ -83,7 +84,7 @@ impl Stream for SprinklerProto {
 
 #[derive(Clone)]
 pub struct Switch {
-    pub inner: Arc<Mutex<HashMap<usize, mpsc::Sender<String>>>>
+    pub inner: Arc<Mutex<HashMap<usize, mpsc::Sender<Message>>>>
 }
 
 impl Switch {
@@ -108,7 +109,10 @@ impl Future for SprinklerRelay {
         if self.proto.read_buffer.len() >= self.header.len as usize {
             if let Ok(msgbody) = String::from_utf8(self.proto.read_buffer.to_vec()) {
                 if let Some(tx) = self.switch.inner.lock().unwrap().get(&(self.header.id as usize)) {
-                    if let Err(_) = tx.send(msgbody) {
+                    if let Err(_) = tx.send(Message{
+                        timestamp: NaiveDateTime::from_timestamp(self.header.timestamp, 0),
+                        body: msgbody
+                    }) {
                         warn!("Failed to relay the message.");
                     }
                 }
@@ -142,11 +146,17 @@ pub trait Sprinkler {
     fn hostname(&self) -> &str;
 
     /// Start the master thread, returning a sender (to the master thread) on a intraprocess communication channel
-    fn activate_master(&self) -> mpsc::Sender<String>;
+    fn activate_master(&self) -> mpsc::Sender<Message>;
 
     /// Start the agent thread
     fn activate_agent(&self);
 
     /// Kill the master thread. Note: there is no way to reach out and kill any agent threads.
     fn deactivate(&self);
+}
+
+/// Sprinkler thread level message format
+pub struct Message {
+    timestamp: NaiveDateTime,
+    body: String
 }
