@@ -13,7 +13,7 @@ pub use docker_oom::*;
 
 pub const HEART_BEAT: u64 = 3;
 pub const RETRY_DELAY: u64 = 20;
-pub const MASTER_ADDR: &str = "127.0.0.1:3777";
+pub const MASTER_ADDR: &str = "192.168.0.24:3777";
 
 /// A TCP stream adapter to convert between byte stream and objects
 #[derive(Debug)]
@@ -56,6 +56,7 @@ impl SprinklerProto {
 #[derive(Clone, Debug)]
 pub struct SprinklerProtoHeader {
     id: u16,
+    timestamp: i64,
     len: u16
 }
 
