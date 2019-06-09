@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate log;
+
 use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex};
 use byteorder::{ByteOrder, BigEndian};
@@ -6,11 +9,6 @@ use futures::try_ready;
 use tokio::prelude::*;
 use tokio::net::TcpStream;
 use chrono::naive::NaiveDateTime;
-
-pub mod commcheck;
-pub use commcheck::*;
-pub mod docker_oom;
-pub use docker_oom::*;
 
 pub const HEART_BEAT: u64 = 3;
 pub const RETRY_DELAY: u64 = 20;
@@ -157,6 +155,6 @@ pub trait Sprinkler {
 
 /// Sprinkler thread level message format
 pub struct Message {
-    timestamp: NaiveDateTime,
-    body: String
+    pub timestamp: NaiveDateTime,
+    pub body: String
 }

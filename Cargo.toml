@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["Alex Yang <aleozlx@gmail.com>"]
 edition = "2018"
 
+[lib]
+name = "sprinkler_api"
+
 [dependencies]
 log = "0.4"
 fern = "0.5"

@@ -6,8 +6,9 @@ extern crate log;
 use std::thread;
 use futures::future::{self, Either};
 use tokio::prelude::*;
-mod sprinkler;
-use sprinkler::*;
+use sprinkler_api::*;
+mod commcheck;
+use commcheck::CommCheck;
 
 const FNAME_CONFIG: &str = "/etc/sprinkler.conf";
 
