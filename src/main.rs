@@ -1,12 +1,6 @@
 #[macro_use]
 extern crate clap;
-#[macro_use]
-extern crate log;
-
-use std::thread;
-use futures::future::{self, Either};
-use tokio::prelude::*;
-use sprinkler_api::*;
+use sprinkler_api::{SprinklerBuilder, SprinklerOptions, Sprinkler, Switch, CommCheck};
 
 const MASTER_ADDR: &str = "192.168.0.3:3777";
 
@@ -45,56 +39,17 @@ fn main() {
     setup_logger(args.occurrences_of("VERBOSE")).expect("Logger Error.");
 
     let mut builder = SprinklerBuilder::new(SprinklerOptions{ master_addr: String::from(MASTER_ADDR), ..Default::default() });
-
-    let triggers: Vec<Box<dyn Sprinkler>> = vec![
+    let sprinklers: Vec<Box<dyn Sprinkler>> = vec![
         Box::new(builder.build::<CommCheck>(String::from("alex-jetson-tx2")))
     ];
-
     if args.is_present("AGENT") {
-        if let Ok(hostname) = sys_info::hostname() {
-            for i in triggers.iter().filter(|&i| i.hostname() == hostname) {
-                i.activate_agent();
-                info!("sprinkler[{}] activated.", i.id());
-            }
-            loop { thread::sleep(std::time::Duration::from_secs(300)); }
-        }
-        else {
-            error!("Cannot obtain hostname.");
-            std::process::exit(-1);
-        }
+        sprinkler_api::agent(&sprinklers);
+        sprinkler_api::loop_forever();
     }
     else {
         let switch = Switch::new();
+        switch.connect_all(&sprinklers);
         let addr = "0.0.0.0:3777".parse().unwrap();
-        let listener = tokio::net::TcpListener::bind(&addr).expect("unable to bind TCP listener");
-        let server = listener.incoming()
-            .map_err(|e| eprintln!("accept failed = {:?}", e))
-            .for_each({ let switch = switch.clone(); move |s| {
-                let proto = SprinklerProto::new(s);
-                let handle_conn = proto.into_future()
-                    .map_err(|(e, _)| e)
-                    .and_then({ let switch = switch.clone(); move |(header, proto)| {
-                        match header {
-                            Some(header) => Either::A(SprinklerRelay{ proto, header, switch }),
-                            None => Either::B(future::ok(())) // Connection dropped?
-                        }
-                    }})
-                    // Task futures have an error of type `()`, this ensures we handle the
-                    // error. We do this by printing the error to STDOUT.
-                    .map_err(|e| {
-                        error!("connection error = {:?}", e);
-                    });
-                tokio::spawn(handle_conn)
-            }});
-        { // Wire'em up!
-            let mut switch_init = switch.inner.lock().unwrap();
-            for i in triggers {
-                match i.activate_master() {
-                    ActivationResult::RealtimeMonitor(monitor) => { switch_init.insert(i.id(), Transmitter::Synchronous(monitor)); },
-                    ActivationResult::AsyncMonitor(monitor) => {}
-                }
-            }
-        }
-        tokio::run(server);
+        sprinkler_api::server(&addr, &switch);
     }
 }

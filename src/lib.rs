@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use byteorder::{ByteOrder, BigEndian};
 use bytes::{BufMut, BytesMut};
 use futures::try_ready;
+use futures::future::Either;
 use tokio::prelude::*;
 use tokio::net::TcpStream;
 use chrono::naive::NaiveDateTime;
@@ -160,6 +161,16 @@ impl Switch {
     pub fn new() -> Self {
         Switch { inner: Arc::new(Mutex::new(HashMap::new())) }
     }
+
+    pub fn connect_all<'a, I: IntoIterator<Item=&'a Box<dyn Sprinkler>> + Copy>(&self, sprinklers: I) {
+        let mut switch_init = self.inner.lock().unwrap();
+        for i in sprinklers {
+            match i.activate_master() {
+                ActivationResult::RealtimeMonitor(monitor) => { switch_init.insert(i.id(), Transmitter::Synchronous(monitor)); },
+                ActivationResult::AsyncMonitor(monitor) => { switch_init.insert(i.id(), Transmitter::Asynchronous(monitor)); }
+            }
+        }
+    }
 }
 
 /// Message relay between master threads and TCP sockets connected to remote agents
@@ -240,4 +251,47 @@ pub trait Sprinkler {
 pub struct Message {
     pub timestamp: NaiveDateTime,
     pub body: String
+}
+
+/// Starts a tokio server bound to the specified address
+pub fn server(addr: &std::net::SocketAddr, switch: &Switch) {
+    let listener = tokio::net::TcpListener::bind(addr).expect("unable to bind TCP listener");
+    let server = listener.incoming()
+        .map_err(|e| eprintln!("accept failed = {:?}", e))
+        .for_each({ let switch = switch.clone(); move |s| {
+            let proto = SprinklerProto::new(s);
+            let handle_conn = proto.into_future()
+                .map_err(|(e, _)| e)
+                .and_then({ let switch = switch.clone(); move |(header, proto)| {
+                    match header {
+                        Some(header) => Either::A(SprinklerRelay{ proto, header, switch }),
+                        None => Either::B(future::ok(())) // Connection dropped?
+                    }
+                }})
+                // Task futures have an error of type `()`, this ensures we handle the
+                // error. We do this by printing the error to STDOUT.
+                .map_err(|e| {
+                    error!("connection error = {:?}", e);
+                });
+            tokio::spawn(handle_conn)
+        }});
+    tokio::run(server);
+}
+
+/// Activates sprinklers agents based on hostname
+pub fn agent<'a, I: IntoIterator<Item=&'a Box<dyn Sprinkler>> + Copy>(sprinklers: I) {
+    if let Ok(hostname) = sys_info::hostname() {
+        for i in sprinklers.into_iter().filter(|&i| i.hostname() == hostname) {
+            i.activate_agent();
+            info!("sprinkler[{}] activated.", i.id());
+        }
+    }
+    else {
+        error!("Cannot obtain hostname.");
+        std::process::exit(-1);
+    }
+}
+
+pub fn loop_forever() -> ! {
+    loop { std::thread::sleep(std::time::Duration::from_secs(600)); }
 }
