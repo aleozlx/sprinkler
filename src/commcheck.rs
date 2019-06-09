@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::thread;
-use std::sync::{mpsc, Arc, Mutex};
-use super::{Sprinkler, SprinklerProto, SprinklerOptions, Message};
+use std::sync::{Arc, Mutex};
+use super::*;
 
 const COMMCHK: &str = "COMMCHK";
 
@@ -28,9 +28,9 @@ impl Sprinkler for CommCheck {
         &self.options._hostname
     }
 
-    fn activate_master(&self) -> mpsc::Sender<Message> {
+    fn activate_master(&self) -> ActivationResult {
         let clone = self.clone();
-        let (tx, rx) = mpsc::channel::<Message>();
+        let (tx, rx) = std::sync::mpsc::channel::<Message>();
         thread::spawn(move || {
             let mut state = false;
             let mut last_seen = chrono::Local::now(); //chrono::naive::NaiveDateTime::from_timestamp(chrono::Local::now().timestamp(), 0);
@@ -63,7 +63,7 @@ impl Sprinkler for CommCheck {
                 else { trace!("sprinkler[{}] heartbeat", clone.id()); }
             }
         });
-        tx
+        ActivationResult::RealtimeMonitor(tx)
     }
 
     fn activate_agent(&self) {

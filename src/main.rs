@@ -87,9 +87,12 @@ fn main() {
                 tokio::spawn(handle_conn)
             }});
         { // Wire'em up!
-            let mut swith_init = switch.inner.lock().unwrap();
+            let mut switch_init = switch.inner.lock().unwrap();
             for i in triggers {
-                swith_init.insert(i.id(), i.activate_master());
+                match i.activate_master() {
+                    ActivationResult::RealtimeMonitor(monitor) => { switch_init.insert(i.id(), Transmitter::Synchronous(monitor)); },
+                    ActivationResult::AsyncMonitor(monitor) => {}
+                }
             }
         }
         tokio::run(server);

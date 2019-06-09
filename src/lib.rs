@@ -2,7 +2,7 @@
 extern crate log;
 
 use std::collections::HashMap;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex};
 use byteorder::{ByteOrder, BigEndian};
 use bytes::{BufMut, BytesMut};
 use futures::try_ready;
@@ -128,8 +128,32 @@ impl Stream for SprinklerProto {
 }
 
 #[derive(Clone)]
+pub enum Transmitter<T> {
+    /// Synchronous Sender
+    Synchronous(std::sync::mpsc::Sender<T>),
+    /// Asynchronous Sender
+    Asynchronous(futures::sync::mpsc::Sender<T>)
+}
+
+impl<T> Transmitter<T> where T: 'static + Send {
+    /// Send a message through the underlying Sender
+    pub fn send(&self, t: T) -> Result<(), ()> {
+        match self {
+            Transmitter::Synchronous(sender) => sender.send(t).map_err(|_| ()),
+            Transmitter::Asynchronous(sender) => {
+                tokio::spawn({
+                    let sender = sender.clone();
+                    sender.send(t).into_future().map(|_| ()).map_err(|_| ())
+                });
+                Ok(())
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct Switch {
-    pub inner: Arc<Mutex<HashMap<usize, mpsc::Sender<Message>>>>
+    pub inner: Arc<Mutex<HashMap<usize, Transmitter<Message>>>>
 }
 
 impl Switch {
@@ -178,6 +202,14 @@ impl Future for SprinklerRelay {
     }
 }
 
+pub enum ActivationResult {
+    /// A realtime algorithm based master thread that monitors agent threads
+    RealtimeMonitor(std::sync::mpsc::Sender<Message>),
+
+    /// An asynchronous master thread that monitors agent threads
+    AsyncMonitor(futures::sync::mpsc::Sender<Message>)
+}
+
 /// DoS prevention mechanisms, which are consisted of distributed agent threads monitored by master threads, identifiable by a systemwide id.
 /// The agent threads, at a remote location, will independently detect system anomalies and intervene while notifying master threads,
 /// so that there will not be a single point of failure.
@@ -194,7 +226,7 @@ pub trait Sprinkler {
     fn hostname(&self) -> &str;
 
     /// Start the master thread, returning a sender (to the master thread) on a intraprocess communication channel
-    fn activate_master(&self) -> mpsc::Sender<Message>;
+    fn activate_master(&self) -> ActivationResult;
 
     /// Start the agent thread
     fn activate_agent(&self);
