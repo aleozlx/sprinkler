@@ -1,35 +1,31 @@
 use std::io::Write;
 use std::thread;
 use std::sync::{mpsc, Arc, Mutex};
-use super::{Sprinkler, SprinklerProto, Message};
+use super::{Sprinkler, SprinklerProto, SprinklerOptions, Message};
 
 const COMMCHK: &str = "COMMCHK";
 
 /// Basic communication checking, logging connection state changes
 #[derive(Clone)]
 pub struct CommCheck {
-    _id: usize,
-    _hostname: String,
+    options: Arc<SprinklerOptions>,
     _deactivate: Arc<Mutex<bool>>
 }
 
-impl CommCheck {
-    pub fn new(id: usize, hostname: String) -> Self {
+impl Sprinkler for CommCheck {
+    fn build(options: SprinklerOptions) -> Self {
         CommCheck {
-            _id: id,
-            _hostname: hostname,
+            options: Arc::new(options),
             _deactivate: Arc::new(Mutex::new(false))
         }
     }
-}
 
-impl Sprinkler for CommCheck {
     fn id(&self) -> usize {
-        self._id
+        self.options._id
     }
 
     fn hostname(&self) -> &str {
-        &self._hostname
+        &self.options._hostname
     }
 
     fn activate_master(&self) -> mpsc::Sender<Message> {
@@ -47,7 +43,7 @@ impl Sprinkler for CommCheck {
                     if state {
                         // Tolerance (secs) for accumulated network delays
                         const TOLERANCE: i64 = 2;
-                        if chrono::Local::now() - last_seen < chrono::Duration::seconds((super::HEART_BEAT as i64)+TOLERANCE)  {
+                        if chrono::Local::now() - last_seen < chrono::Duration::seconds((clone.options.heart_beat as i64)+TOLERANCE)  {
                             debug!("sprinkler[{}] (CommCheck) on {} may be delayed.", clone.id(), clone.hostname());
                             true
                         }
@@ -62,7 +58,7 @@ impl Sprinkler for CommCheck {
                         clone.id(), clone.hostname(), if state {"online"} else {"offline"}
                     );
                 }
-                thread::sleep(std::time::Duration::from_secs(super::HEART_BEAT));
+                thread::sleep(std::time::Duration::from_secs(clone.options.heart_beat));
                 if *clone._deactivate.lock().unwrap() { break; }
                 else { trace!("sprinkler[{}] heartbeat", clone.id()); }
             }
@@ -73,18 +69,18 @@ impl Sprinkler for CommCheck {
     fn activate_agent(&self) {
         let clone = self.clone();
         thread::spawn(move || loop {
-            if let Ok(mut stream) = std::net::TcpStream::connect(super::MASTER_ADDR) {
+            if let Ok(mut stream) = std::net::TcpStream::connect(&clone.options.master_addr) {
                 let buf = SprinklerProto::buffer(&clone, String::from(COMMCHK));
                 if let Err(e) = stream.write_all(&buf) {
                     debug!("Failed to send the master thread a message: {}", e);
-                    thread::sleep(std::time::Duration::from_secs(super::RETRY_DELAY));
+                    thread::sleep(std::time::Duration::from_secs(clone.options.retry_delay));
                 }
             }
             else {
-                debug!("Connection error, will retry after {} seconds.", super::RETRY_DELAY);
-                thread::sleep(std::time::Duration::from_secs(super::RETRY_DELAY));
+                debug!("Connection error, will retry after {} seconds.", clone.options.retry_delay);
+                thread::sleep(std::time::Duration::from_secs(clone.options.retry_delay));
             }
-            thread::sleep(std::time::Duration::from_secs(super::HEART_BEAT));
+            thread::sleep(std::time::Duration::from_secs(clone.options.heart_beat));
         });
     }
 

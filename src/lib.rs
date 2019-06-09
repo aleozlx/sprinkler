@@ -13,10 +13,53 @@ use chrono::naive::NaiveDateTime;
 mod commcheck;
 pub use commcheck::CommCheck;
 
-// TODO Make these programmable, perhaps package this into a params structure
-pub const HEART_BEAT: u64 = 3;
-pub const RETRY_DELAY: u64 = 20;
-pub const MASTER_ADDR: &str = "192.168.0.3:3777";
+#[derive(Clone)]
+pub struct SprinklerOptions {
+    pub heart_beat: u64,
+    pub retry_delay: u64,
+    pub master_addr: String,
+    pub _id: usize,
+    pub _hostname: String,
+}
+
+impl Default for SprinklerOptions {
+    fn default() -> Self {
+        SprinklerOptions {
+            heart_beat: 3,
+            retry_delay: 20,
+            master_addr: String::from("localhost"),
+            _id: 0,
+            _hostname: String::from("localhost")
+        }
+    }
+}
+
+/// Sprinkler Builder
+pub struct SprinklerBuilder {
+    params: SprinklerOptions,
+    counter: usize
+}
+
+impl SprinklerBuilder {
+    pub fn new(params: SprinklerOptions) -> Self {
+        SprinklerBuilder {
+            params,
+            counter: 0
+        }
+    }
+}
+
+impl SprinklerBuilder {
+    pub fn build<T: Sprinkler>(&mut self, hostname: String) -> T {
+        let next = self.counter;
+        self.counter += 1;
+        T::build(SprinklerOptions {
+            _id: next,
+            _hostname: hostname,
+            ..self.params.clone()
+        })
+    }
+}
 
 /// A TCP stream adapter to convert between byte stream and objects
 #[derive(Debug)]
@@ -141,6 +184,9 @@ impl Future for SprinklerRelay {
 /// The master threads, gathered at a single reachable networking endpoint, may participate in DoS prevention from a control plane angle or only record system anomalies.
 /// The systemwide configuration is done by replicating the same config file and executable.
 pub trait Sprinkler {
+    /// Build a new sprinkler
+    fn build(options: SprinklerOptions) -> Self where Self: Sized;
+
     /// Get systemwide id
     fn id(&self) -> usize;
 

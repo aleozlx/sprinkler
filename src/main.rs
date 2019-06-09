@@ -8,6 +8,8 @@ use futures::future::{self, Either};
 use tokio::prelude::*;
 use sprinkler_api::*;
 
+const MASTER_ADDR: &str = "192.168.0.3:3777";
+
 fn setup_logger(verbose: u64) -> Result<(), fern::InitError> {
     fern::Dispatch::new()
         .format(|out, message, record| {
@@ -42,8 +44,10 @@ fn main() {
     
     setup_logger(args.occurrences_of("VERBOSE")).expect("Logger Error.");
 
+    let mut builder = SprinklerBuilder::new(SprinklerOptions{ master_addr: String::from(MASTER_ADDR), ..Default::default() });
+
     let triggers: Vec<Box<dyn Sprinkler>> = vec![
-        Box::new(CommCheck::new(0, String::from("alex-jetson-tx2"))),
+        Box::new(builder.build::<CommCheck>(String::from("alex-jetson-tx2")))
     ];
 
     if args.is_present("AGENT") {
