@@ -13,7 +13,7 @@ pub use docker_oom::*;
 
 pub const HEART_BEAT: u64 = 3;
 pub const RETRY_DELAY: u64 = 20;
-pub const MASTER_ADDR: &str = "192.168.0.24:3777";
+pub const MASTER_ADDR: &str = "192.168.0.3:3777";
 
 /// A TCP stream adapter to convert between byte stream and objects
 #[derive(Debug)]
@@ -35,6 +35,7 @@ impl SprinklerProto {
         let mut write_buffer = BytesMut::new();
         write_buffer.reserve(512);
         write_buffer.put_u16_be(sprinkler.id() as u16);
+        write_buffer.put_i64_be(chrono::Local::now().timestamp());
         write_buffer.put_u16_be(msg.len() as u16);
         write_buffer.put(msg);
         write_buffer
@@ -66,9 +67,10 @@ impl Stream for SprinklerProto {
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         let sock_closed = self.check()?.is_ready();
-        if self.read_buffer.len() > 4 {
+        if self.read_buffer.len() > 12 {
             Ok(Async::Ready(Some(SprinklerProtoHeader {
                 id: BigEndian::read_u16(&self.read_buffer.split_to(2)),
+                timestamp: BigEndian::read_u64(&self.read_buffer.split_to(8)) as i64,
                 len: BigEndian::read_u16(&self.read_buffer.split_to(2))
             })))
         }
