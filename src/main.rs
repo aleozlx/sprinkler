@@ -45,10 +45,7 @@ fn main() {
 
     // parse FNAME_CONFIG and add triggers
     let triggers: Vec<Box<dyn Sprinkler>> = vec![
-        // DockerOOM { hostname: String::from("k-prod-cpu-1.dsa.lan") }
         Box::new(CommCheck::new(0, String::from("alex-jetson-tx2"))),
-        // box CommCheck::new(1, String::from("localhost")),
-        // box DockerOOM::new(2, String::from("latitude-5289"))
     ];
 
     // let triggers: Vec<&Sprinkler> = Vec::new();
