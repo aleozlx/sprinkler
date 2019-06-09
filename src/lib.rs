@@ -10,6 +10,9 @@ use tokio::prelude::*;
 use tokio::net::TcpStream;
 use chrono::naive::NaiveDateTime;
 
+mod commcheck;
+pub use commcheck::CommCheck;
+
 pub const HEART_BEAT: u64 = 3;
 pub const RETRY_DELAY: u64 = 20;
 pub const MASTER_ADDR: &str = "192.168.0.3:3777";
