@@ -1,6 +1,5 @@
 use std::io::Write;
 use std::thread;
-use std::net::ToSocketAddrs;
 use std::sync::{Arc, Mutex};
 use super::*;
 
@@ -70,21 +69,10 @@ impl Sprinkler for CommCheck {
     fn activate_agent(&self) {
         let clone = self.clone();
         thread::spawn(move || loop {
-            let runtime = tokio::runtime::Runtime::new().expect("failed to initialize a tokio runtime");
-            let addr = clone.options.master_addr
-                .to_socket_addrs().unwrap()
-                .next().unwrap();
-            let socket = TcpStream::connect(&addr);
-            let cx = native_tls::TlsConnector::builder().build().expect("failed to build a TLS connector");
-            let cx = tokio_tls::TlsConnector::from(cx);
-
-            let tls_handshake = socket.and_then(move |socket| {
-                cx.connect("www.rust-lang.org", socket)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
-            });
-
-
-            if let Ok(mut stream) = std::net::TcpStream::connect(&clone.options.master_addr) {
+            let master_addr = clone.options.master_addr.clone();
+            if let Ok(socket) = std::net::TcpStream::connect(&clone.options.master_addr) {
+                let connector = native_tls::TlsConnector::builder().build().expect("failed to build a TLS connector");
+                let mut stream = connector.connect(&master_addr.split(":").take(1).collect::<Vec<&str>>()[0], socket).expect("failed to establish a TLS stream");
                 let buf = SprinklerProto::buffer(&clone, String::from(COMMCHK));
                 if let Err(e) = stream.write_all(&buf) {
                     debug!("Failed to send the master thread a message: {}", e);

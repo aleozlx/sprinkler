@@ -2,7 +2,7 @@
 extern crate clap;
 use sprinkler_api::{SprinklerBuilder, SprinklerOptions, Sprinkler, Switch, CommCheck};
 
-const MASTER_ADDR: &str = "192.168.0.3:3777";
+const MASTER_ADDR: &str = "desktop-cyberpower.localdomain:3777";
 
 fn setup_logger(verbose: u64) -> Result<(), fern::InitError> {
     fern::Dispatch::new()

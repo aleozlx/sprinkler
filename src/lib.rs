@@ -269,6 +269,8 @@ pub fn server(addr: &std::net::SocketAddr, switch: &Switch) {
     openssl req -new -newkey rsa:4096 -x509 -sha256 -days 365 -nodes -out sprinkler.crt -keyout sprinkler.key
     openssl pkcs12 -export -out identity.p12 -inkey sprinkler.key -in sprinkler.crt
     echo "$KEY_PASSWORD" | tr -d '\n' > identity.txt
+    chown root:root identity.txt
+    chmod 600 identity.txt
     */
     if let Ok(tls_acceptor) = init_tls() {
         let listener = tokio::net::TcpListener::bind(addr).expect("unable to bind TCP listener");
