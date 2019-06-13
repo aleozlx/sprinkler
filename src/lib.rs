@@ -62,15 +62,17 @@ impl SprinklerBuilder {
     }
 }
 
+type EncryptedStream = tokio_tls::TlsStream<TcpStream>;
+
 /// A TCP stream adapter to convert between byte stream and objects
 #[derive(Debug)]
 pub struct SprinklerProto {
-    socket: TcpStream,
+    socket: EncryptedStream,
     read_buffer: BytesMut,
 }
 
 impl SprinklerProto {
-    pub fn new(socket: TcpStream) -> Self {
+    pub fn new(socket: EncryptedStream) -> Self {
         SprinklerProto {
             socket,
             read_buffer: BytesMut::new(),
@@ -253,29 +255,56 @@ pub struct Message {
     pub body: String
 }
 
+/// Create a TLS acceptor
+fn init_tls() -> native_tls::Result<tokio_tls::TlsAcceptor> {
+    let der = include_bytes!("../identity.p12");
+    let cert = native_tls::Identity::from_pkcs12(der, include_str!("../identity.txt"))?;
+    Ok(tokio_tls::TlsAcceptor::from(native_tls::TlsAcceptor::builder(cert).build()?))
+}
+
 /// Starts a tokio server bound to the specified address
 pub fn server(addr: &std::net::SocketAddr, switch: &Switch) {
-    let listener = tokio::net::TcpListener::bind(addr).expect("unable to bind TCP listener");
-    let server = listener.incoming()
-        .map_err(|e| eprintln!("accept failed = {:?}", e))
-        .for_each({ let switch = switch.clone(); move |s| {
-            let proto = SprinklerProto::new(s);
-            let handle_conn = proto.into_future()
-                .map_err(|(e, _)| e)
-                .and_then({ let switch = switch.clone(); move |(header, proto)| {
-                    match header {
-                        Some(header) => Either::A(SprinklerRelay{ proto, header, switch }),
-                        None => Either::B(future::ok(())) // Connection dropped?
-                    }
+    /*
+    Self-signed cert
+    openssl req -new -newkey rsa:4096 -x509 -sha256 -days 365 -nodes -out sprinkler.crt -keyout sprinkler.key
+    openssl pkcs12 -export -out identity.p12 -inkey sprinkler.key -in sprinkler.crt
+    echo "$KEY_PASSWORD" | tr -d '\n' > identity.txt
+    */
+    if let Ok(tls_acceptor) = init_tls() {
+        let listener = tokio::net::TcpListener::bind(addr).expect("unable to bind TCP listener");
+        let server = listener.incoming()
+            .map_err(|e| eprintln!("accept failed = {:?}", e))
+            .for_each({ let switch = switch.clone(); move |s| {
+                let tls_accept = tls_acceptor
+                .accept(s)
+                .and_then({ let switch = switch.clone(); move |s| {
+                    let proto = SprinklerProto::new(s);
+                    let handle_conn = proto.into_future()
+                        .map_err(|(e, _)| e)
+                        .and_then({ let switch = switch.clone(); move |(header, proto)| {
+                            match header {
+                                Some(header) => Either::A(SprinklerRelay{ proto, header, switch }),
+                                None => Either::B(future::ok(())) // Connection dropped?
+                            }
+                        }})
+                        // Task futures have an error of type `()`, this ensures we handle the
+                        // error. We do this by printing the error to STDOUT.
+                        .map_err(|e| {
+                            error!("connection error = {:?}", e);
+                        });
+                    tokio::spawn(handle_conn);
+                    Ok(())
                 }})
-                // Task futures have an error of type `()`, this ensures we handle the
-                // error. We do this by printing the error to STDOUT.
-                .map_err(|e| {
-                    error!("connection error = {:?}", e);
+                .map_err(|err| {
+                    println!("TLS accept error: {:?}", err);
                 });
-            tokio::spawn(handle_conn)
-        }});
-    tokio::run(server);
+                tokio::spawn(tls_accept)
+            }});
+        tokio::run(server);
+    }
+    else {
+        error!("cannot initialize tls");
+    }
 }
 
 /// Activates sprinklers agents based on hostname
