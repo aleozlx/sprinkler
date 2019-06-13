@@ -307,7 +307,7 @@ pub fn server(addr: &std::net::SocketAddr, switch: &Switch) {
                     Ok(())
                 }})
                 .map_err(|err| {
-                    println!("TLS accept error: {:?}", err);
+                    debug!("TLS accept error: {:?}", err);
                 });
                 tokio::spawn(tls_accept)
             }});

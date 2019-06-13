@@ -32,7 +32,6 @@ fn main() {
             (version: crate_version!())
             (author: crate_authors!())
             (about: crate_description!())
-            // (@arg AGENT: --("agent") "Agent mode")
             (@arg VERBOSE: --verbose -v ... "Logging verbosity")
         ).get_matches();
     
@@ -42,16 +41,12 @@ fn main() {
     let sprinklers: Vec<Box<dyn Sprinkler>> = vec![
         Box::new(builder.build::<CommCheck>(String::from("alex-jetson-tx2")))
     ];
-    #[cfg(not(feature = "master"))]
-    {
-    // if args.is_present("AGENT") {
+    
+    #[cfg(not(feature = "master"))] {
         sprinkler_api::agent(&sprinklers);
         sprinkler_api::loop_forever();
-    // }
     }
-
-    #[cfg(feature = "master")]
-    {
+    #[cfg(feature = "master")] {
         let switch = Switch::new();
         switch.connect_all(&sprinklers);
         let addr = "0.0.0.0:3777".parse().unwrap();
