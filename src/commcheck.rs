@@ -73,7 +73,7 @@ impl Sprinkler for CommCheck {
             if let Ok(socket) = std::net::TcpStream::connect(&clone.options.master_addr) {
                 let connector = native_tls::TlsConnector::builder().build().expect("failed to build a TLS connector");
                 let mut stream = connector.connect(&master_addr.split(":").take(1).collect::<Vec<&str>>()[0], socket).expect("failed to establish a TLS stream");
-                let buf = SprinklerProto::buffer(&clone, String::from(COMMCHK));
+                let buf = super::buffer(&clone, String::from(COMMCHK));
                 if let Err(e) = stream.write_all(&buf) {
                     debug!("Failed to send the master thread a message: {}", e);
                     thread::sleep(std::time::Duration::from_secs(clone.options.retry_delay));

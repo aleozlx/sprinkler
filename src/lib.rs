@@ -1,14 +1,15 @@
+#![allow(unused_imports)]
+
 #[macro_use]
 extern crate log;
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use byteorder::{ByteOrder, BigEndian};
 use bytes::{BufMut, BytesMut};
+use tokio::net::TcpStream;
+use byteorder::{ByteOrder, BigEndian};
 use futures::try_ready;
 use futures::future::Either;
 use tokio::prelude::*;
-use tokio::net::TcpStream;
 use chrono::naive::NaiveDateTime;
 
 mod commcheck;
@@ -62,32 +63,24 @@ impl SprinklerBuilder {
     }
 }
 
+#[cfg(feature = "master")]
 type EncryptedStream = tokio_tls::TlsStream<TcpStream>;
 
 /// A TCP stream adapter to convert between byte stream and objects
+#[cfg(feature = "master")]
 #[derive(Debug)]
 pub struct SprinklerProto {
     socket: EncryptedStream,
     read_buffer: BytesMut,
 }
 
+#[cfg(feature = "master")]
 impl SprinklerProto {
     pub fn new(socket: EncryptedStream) -> Self {
         SprinklerProto {
             socket,
             read_buffer: BytesMut::new(),
         }
-    }
-
-    /// Encode a message and place it in a write buffer
-    pub fn buffer<S: Sprinkler>(sprinkler: &S, msg: String) -> BytesMut {
-        let mut write_buffer = BytesMut::new();
-        write_buffer.reserve(512);
-        write_buffer.put_u16_be(sprinkler.id() as u16);
-        write_buffer.put_i64_be(chrono::Local::now().timestamp());
-        write_buffer.put_u16_be(msg.len() as u16);
-        write_buffer.put(msg);
-        write_buffer
     }
 
     /// Update read buffer
@@ -102,6 +95,17 @@ impl SprinklerProto {
     }
 }
 
+/// Encode a message and place it in a write buffer
+pub fn buffer<S: Sprinkler>(sprinkler: &S, msg: String) -> BytesMut {
+    let mut write_buffer = BytesMut::new();
+    write_buffer.reserve(512);
+    write_buffer.put_u16_be(sprinkler.id() as u16);
+    write_buffer.put_i64_be(chrono::Local::now().timestamp());
+    write_buffer.put_u16_be(msg.len() as u16);
+    write_buffer.put(msg);
+    write_buffer
+}
+
 /// Message header
 #[derive(Clone, Debug)]
 pub struct SprinklerProtoHeader {
@@ -110,6 +114,7 @@ pub struct SprinklerProtoHeader {
     len: u16
 }
 
+#[cfg(feature = "master")]
 impl Stream for SprinklerProto {
     type Item = SprinklerProtoHeader;
     type Error = std::io::Error;
@@ -176,12 +181,14 @@ impl Switch {
 }
 
 /// Message relay between master threads and TCP sockets connected to remote agents
+#[cfg(feature = "master")]
 pub struct SprinklerRelay {
     pub proto: SprinklerProto,
     pub header: SprinklerProtoHeader,
     pub switch: Switch
 }
 
+#[cfg(feature = "master")]
 impl Future for SprinklerRelay {
     type Item = ();
     type Error = std::io::Error;
@@ -256,6 +263,7 @@ pub struct Message {
 }
 
 /// Create a TLS acceptor
+#[cfg(feature = "master")]
 fn init_tls() -> native_tls::Result<tokio_tls::TlsAcceptor> {
     let der = include_bytes!("../identity.p12");
     let cert = native_tls::Identity::from_pkcs12(der, include_str!("../identity.txt"))?;
@@ -263,6 +271,7 @@ fn init_tls() -> native_tls::Result<tokio_tls::TlsAcceptor> {
 }
 
 /// Starts a tokio server bound to the specified address
+#[cfg(feature = "master")]
 pub fn server(addr: &std::net::SocketAddr, switch: &Switch) {
     /*
     Self-signed cert
