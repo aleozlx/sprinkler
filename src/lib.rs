@@ -265,8 +265,11 @@ pub struct Message {
 /// Create a TLS acceptor
 #[cfg(feature = "master")]
 fn init_tls() -> native_tls::Result<tokio_tls::TlsAcceptor> {
-    let der = include_bytes!("../identity.p12");
-    let cert = native_tls::Identity::from_pkcs12(der, include_str!("../identity.txt"))?;
+    let der = include_bytes!("/etc/sprinkler.conf.d/master.p12");
+    // TODO key loading is hard coded.
+    let mut keybuffer = Vec::new();
+    std::fs::File::open("/root/.sprinkler.key").expect("cannot read key").read_to_end(&mut keybuffer).expect("cannot read key");
+    let cert = native_tls::Identity::from_pkcs12(der, &String::from_utf8_lossy(&keybuffer))?;
     Ok(tokio_tls::TlsAcceptor::from(native_tls::TlsAcceptor::builder(cert).build()?))
 }
 
