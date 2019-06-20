@@ -262,6 +262,97 @@ pub struct Message {
     pub body: String
 }
 
+#[derive(PartialEq, Debug, Copy, Clone)]
+pub enum Anomaly {
+    Negative,       // No anomaly has been detected
+    Positive,       // Anomaly has occurred
+    Fixing(usize),  // Has attempted to intervene N times
+    OutOfControl    // Has given up trying because the programmed strategy will not work
+}
+
+impl Anomaly {
+    pub fn get_retry_unchecked(&self) -> usize {
+        match self {
+            Anomaly::Negative | Anomaly::Positive => 0,
+            Anomaly::Fixing(n) => *n,
+            Anomaly::OutOfControl => std::usize::MAX
+        }
+    }
+
+    pub fn escalate(&self, max_retry: usize) -> AnomalyTransition {
+        match self {
+            Anomaly::Negative => (*self >> Anomaly::Positive).unwrap(),
+            Anomaly::Positive => (*self >> Anomaly::Fixing(1)).unwrap(),
+            Anomaly::Fixing(n) => if *n < max_retry {
+                AnomalyTransition::Fixing
+            } else {
+                (*self >> Anomaly::OutOfControl).unwrap()
+            },
+            Anomaly::OutOfControl => (*self >> Anomaly::OutOfControl).unwrap(),
+        }
+    }
+
+    pub fn diminish(&self) -> AnomalyTransition {
+        (*self >> Anomaly::Negative).unwrap()
+    }
+}
+
+#[derive(PartialEq, Debug, Copy, Clone)]
+pub enum AnomalyTransition {
+    Normal,         // Negative -> Negative
+    Occurred,       // Negative -> Positive
+    Unhandled,      // Positive -> Positive
+    Disappeared,    // Positive | OutOfControl -> Negative
+    Fixed,          // Fixing(_) -> Negative
+    Fixing,         // Positive -> Fixing(1) || Fixing(n) -> Fixing(n+1)
+    GaveUp,         // Fixing(m) -> OutOfControl
+    HasGivenUp      // OutOfControl -> OutOfControl
+}
+
+use std::ops::Shr;
+use std::ops::ShrAssign;
+impl Shr for Anomaly {
+    type Output = Option<AnomalyTransition>;
+    fn shr(self, rhs: Self) -> Option<AnomalyTransition> {
+        match (self, rhs) {
+            (Anomaly::Negative, Anomaly::Negative) => Some(AnomalyTransition::Normal),
+            (Anomaly::Negative, Anomaly::Positive) => Some(AnomalyTransition::Occurred),
+            (Anomaly::Positive, Anomaly::Positive) => Some(AnomalyTransition::Unhandled),
+            (Anomaly::Positive, Anomaly::Negative) => Some(AnomalyTransition::Disappeared),
+            (Anomaly::Positive, Anomaly::Fixing(1)) => Some(AnomalyTransition::Fixing),
+            (Anomaly::Fixing(i), Anomaly::Fixing(j)) if i+1==j => Some(AnomalyTransition::Fixing),
+            (Anomaly::Fixing(_), Anomaly::Negative) => Some(AnomalyTransition::Fixed),
+            (Anomaly::Fixing(_), Anomaly::OutOfControl) => Some(AnomalyTransition::GaveUp),
+            (Anomaly::OutOfControl, Anomaly::Negative) => Some(AnomalyTransition::Disappeared),
+            (Anomaly::OutOfControl, Anomaly::OutOfControl) => Some(AnomalyTransition::HasGivenUp),
+            _ => None
+        }
+    }
+}
+
+impl Shr<AnomalyTransition> for Anomaly {
+    type Output = Anomaly;
+    fn shr(self, rhs: AnomalyTransition) -> Anomaly {
+        match (self, rhs) {
+            (Anomaly::Negative, AnomalyTransition::Occurred) => Anomaly::Positive,
+            (Anomaly::Positive, AnomalyTransition::Disappeared) => Anomaly::Negative,
+            (Anomaly::OutOfControl, AnomalyTransition::Disappeared) => Anomaly::Negative,
+            (Anomaly::Fixing(_), AnomalyTransition::Fixed) => Anomaly::Negative,
+            (Anomaly::Positive, AnomalyTransition::Fixing) => Anomaly::Fixing(1),
+            (Anomaly::Fixing(n), AnomalyTransition::Fixing) => Anomaly::Fixing(n+1),
+            (Anomaly::Fixing(_), AnomalyTransition::GaveUp) => Anomaly::OutOfControl,
+            _ => self
+        }
+    }
+}
+
+impl ShrAssign<AnomalyTransition> for Anomaly {
+    fn shr_assign(&mut self, rhs: AnomalyTransition) {
+        let next = *self >> rhs;
+        *self = next;
+    }
+}
+
 /// Create a TLS acceptor
 #[cfg(feature = "master")]
 fn init_tls() -> native_tls::Result<tokio_tls::TlsAcceptor> {
