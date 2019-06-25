@@ -405,7 +405,7 @@ pub fn server(addr: &std::net::SocketAddr, switch: &Switch) {
                 });
                 tokio::spawn(tls_accept)
             }});
-        tokio::run(server);
+        tokio::spawn(server);
     }
     else {
         error!("cannot initialize tls");

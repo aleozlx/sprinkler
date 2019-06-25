@@ -50,6 +50,7 @@ fn main() {
         let switch = Switch::new();
         switch.connect_all(&sprinklers);
         let addr = "0.0.0.0:3777".parse().unwrap();
+        // TODO start runtime
         sprinkler_api::server(&addr, &switch);
     }
 }
