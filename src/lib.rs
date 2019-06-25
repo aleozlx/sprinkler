@@ -96,7 +96,7 @@ impl SprinklerProto {
 }
 
 /// Encode a message and place it in a write buffer
-pub fn buffer<S: Sprinkler>(sprinkler: &S, msg: String) -> BytesMut {
+pub fn compose_message(from: usize, msg: String) -> BytesMut {
     let mut write_buffer = BytesMut::new();
     write_buffer.reserve(512);
     write_buffer.put_u16_be(sprinkler.id() as u16);
