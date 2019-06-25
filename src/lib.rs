@@ -99,7 +99,7 @@ impl SprinklerProto {
 pub fn compose_message(from: usize, msg: String) -> BytesMut {
     let mut write_buffer = BytesMut::new();
     write_buffer.reserve(512);
-    write_buffer.put_u16_be(sprinkler.id() as u16);
+    write_buffer.put_u16_be(from as u16);
     write_buffer.put_i64_be(chrono::Local::now().timestamp());
     write_buffer.put_u16_be(msg.len() as u16);
     write_buffer.put(msg);
